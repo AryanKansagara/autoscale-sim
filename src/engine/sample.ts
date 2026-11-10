@@ -7,7 +7,7 @@ export const SAMPLES: SampleDef[] = [
   {
     id: 'chat-llm', name: 'Chat LLM endpoint', gpu: 'H100',
     blurb: '7 days of a 70B chat model: diurnal traffic, quiet nights, a nightly batch job at 02:00 UTC.',
-    policy: { minReplicas: 0, maxReplicas: 6, concurrency: 8, targetUtil: 0.7, windowSec: 60, scaleDownDelaySec: 900, coldStartSec: 75, gpuHourly: 9.98 },
+    policy: { minReplicas: 0, maxReplicas: 6, concurrency: 8, targetUtil: 0.7, windowSec: 60, scaleDownDelaySec: 900, coldStartSec: 75, gpuHourly: 6.5 },
   },
   {
     id: 'image-gen', name: 'Image model, spiky', gpu: 'A100',

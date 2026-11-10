@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" data-default-mode="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Autoscale Sim: replay your inference traffic against autoscaling policies</title>
+    <meta name="description" content="Import inference request logs and replay them against autoscaling policies: cold starts, queue wait, p95/p99 latency and GPU cost, a policy sweep with a cost vs p99 frontier, and a pre-warm schedule." />
+    <meta name="theme-color" content="#000000" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%236d55bd'/><text x='16' y='21.5' font-family='Arial,sans-serif' font-size='14' font-weight='900' text-anchor='middle' fill='white'>OH</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+    <script>
+      (function () {
+        var q = new URLSearchParams(location.search).get('mode')
+        var m = q === 'light' || q === 'dark' ? q : localStorage.getItem('themeMode')
+        document.documentElement.dataset.themeMode = m === 'light' || m === 'dark' ? m : document.documentElement.dataset.defaultMode
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
