@@ -5,13 +5,25 @@ import { pct, sortNum } from './stats.ts'
 export interface Job { t: number; s: number }
 
 /**
- * Service time for replay is the logged latency, except requests flagged as cold starts get the warm
- * median instead: the simulator models cold starts itself, so keeping the logged penalty would count it twice.
+ * Service time for replay. The simulator models queueing and cold starts itself, so time the logs show
+ * spent waiting is removed: a logged queue time is subtracted directly; otherwise detected cold starts get the warm median, and when TTFT is logged, TTFT above
+ * 3x the median TTFT is treated as waiting (queue or boot) rather than work; without TTFT, requests that
+ * arrived during a detected boot have the remaining boot time removed.
  */
 export function toJobs(reqs: Req[], coldIdx: number[] = [], medianLat?: number): Job[] {
   const cold = new Set(coldIdx)
   const med = medianLat ?? pct(sortNum(reqs.map(r => r.lat)), 0.5)
-  return reqs.map((r, i) => ({ t: r.t, s: cold.has(i) ? med : r.lat }))
+  const tt = sortNum(reqs.filter(r => r.ttft !== undefined).map(r => r.ttft!))
+  const ttCap = tt.length ? 3 * pct(tt, 0.5) : Infinity
+  // Without TTFT, requests that arrived while a detected cold start was booting waited for it too:
+  // the boot ends about (latency - median) after the cold request arrived.
+  let bootEnd = -Infinity
+  return reqs.map((r, i) => {
+    if (r.queue !== undefined) return { t: r.t, s: Math.max(1, r.lat - r.queue) }
+    if (cold.has(i)) { bootEnd = Math.max(bootEnd, r.t + r.lat - med); return { t: r.t, s: med } }
+    if (r.ttft !== undefined) return { t: r.t, s: r.ttft > ttCap ? Math.max(1, r.lat - (r.ttft - ttCap)) : r.lat }
+    return { t: r.t, s: r.t < bootEnd ? Math.max(Math.min(r.lat, med * 0.25), r.lat - (bootEnd - r.t)) : r.lat }
+  })
 }
 
 export interface SimPoint { t: number; replicas: number; ready: number; queue: number; n: number; p95: number; wait: number }
@@ -33,6 +45,9 @@ export interface SimResult {
   scaleUps: number
   hours: number
   series: SimPoint[]
+  /** Per-job wait (ms) and whether it waited on a booting replica, when opts.perRequest is set. */
+  waits?: Float64Array
+  coldFlags?: Uint8Array
 }
 
 interface Replica { start: number; ready: number; end: number; active: number }
@@ -46,7 +61,7 @@ const TICK_MS = 5000
  * coldStartSec) and scales down only after load has stayed below capacity for scaleDownDelaySec.
  * With zero replicas, the first arrival triggers a scale-up at once. Replicas are billed from boot to removal.
  */
-export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: number; bucketSec?: number; series?: boolean } = {}): SimResult {
+export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: number; bucketSec?: number; series?: boolean; perRequest?: boolean } = {}): SimResult {
   const n = jobs.length
   const C = Math.max(1, Math.floor(p.concurrency))
   const minR = Math.max(0, Math.floor(p.minReplicas))
@@ -99,6 +114,7 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
   let qh = 0
   let inflight = 0
   const lat = new Float64Array(n), wait = new Float64Array(n)
+  const coldFlags = opts.perRequest ? new Uint8Array(n) : undefined
   let coldHits = 0, scaleUps = 0, maxQueue = 0, peak = minR
   const samples: number[] = []
   let sampleSum = 0
@@ -128,7 +144,7 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
       const w = now - jobs[j].t
       wait[j] = w
       lat[j] = w + jobs[j].s
-      if (rep.ready > jobs[j].t) coldHits++
+      if (rep.ready > jobs[j].t) { coldHits++; if (coldFlags) coldFlags[j] = 1 }
       push(now + jobs[j].s, rep)
       if (wantSeries) { const b = bi(jobs[j].t); bLat[b].push(lat[j]); bN[b]++; bW[b] += w }
     }
@@ -219,6 +235,7 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
     meanWaitMs: n ? ws / n : 0, p95WaitMs: pct(sw, 0.95), p99WaitMs: pct(sw, 0.99), maxQueue,
     coldHits, coldRate: n ? coldHits / n : 0, replicaHours, cost, costPer1k: n ? cost / n * 1000 : NaN,
     peakReplicas: peak, scaleUps, hours: (billEnd - t0) / 3_600_000, series,
+    ...(opts.perRequest ? { waits: wait, coldFlags } : {}),
   }
 }
 

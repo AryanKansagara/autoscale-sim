@@ -3,6 +3,8 @@ export interface Req {
   t: number
   lat: number
   ttft?: number
+  /** Time spent queued (including waiting for a replica to boot), when the server logs it. */
+  queue?: number
   ok: boolean
   timeout?: boolean
   status?: number

@@ -72,7 +72,7 @@ export function ReplayChart({ series, sloMs, compact, label }: { series: SimPoin
         <g className="axis">
           <text x={L - 6} y={y1(maxN) + 4}>{maxN}</text><text x={L - 6} y={h1}>0</text>
           <text x={L - 6} y={y2(maxR) + 4}>{maxR}</text><text x={L - 6} y={top2 + h2}>0</text>
-          <text x={L - 6} y={y3(maxL) + 4}>{fmtMs(maxL).replace(' ', '')}</text><text x={L - 6} y={top3 + h3}>0</text>
+          <text x={L - 6} y={y3(maxL) + 4}>{maxL < 1000 ? `${Math.round(maxL)}ms` : `${Math.round(maxL / 1000)}s`}</text><text x={L - 6} y={top3 + h3}>0</text>
           {ticks.map(i => <text key={i} className="x" x={x(i)} y={H - 4}>{timeLabel(series[i].t, span)}</text>)}
         </g>
         <g className="panel-label">
@@ -103,10 +103,11 @@ export function ReplayChart({ series, sloMs, compact, label }: { series: SimPoin
 export function LatencyHist({ values, marks, label }: { values: number[]; marks: { label: string; v: number }[]; label: string }) {
   const [ref, w] = useWidth<HTMLDivElement>()
   const [hover, setHover] = useState<number | null>(null)
-  const H = 170, L = 8, R = 8, B = 22
+  const H = 190, L = 8, R = 70, B = 22
   const pos = values.filter(v => v > 0)
   if (!pos.length) return <div ref={ref} className="chart-empty">No latencies.</div>
-  const lo = Math.log10(Math.max(1, Math.min(...pos))), hi = Math.log10(Math.max(...pos)) + 1e-6
+  // reduce, not spread: logs can hold far more values than the argument limit
+  const lo = Math.log10(Math.max(1, pos.reduce((m, v) => Math.min(m, v), Infinity))), hi = Math.log10(pos.reduce((m, v) => Math.max(m, v), 1)) + 1e-6
   const nb = 40
   const bins = new Array(nb).fill(0)
   for (const v of pos) bins[Math.min(nb - 1, Math.floor(((Math.log10(Math.max(1, v)) - lo) / (hi - lo)) * nb))]++
@@ -120,15 +121,15 @@ export function LatencyHist({ values, marks, label }: { values: number[]; marks:
       <svg width={w} height={H} role="img" aria-label={label} onPointerLeave={() => setHover(null)}>
         <line className="grid-base" x1={L} x2={w - R} y1={H - B} y2={H - B} />
         {bins.map((c, i) => {
-          const hgt = c ? Math.max(2, (c / max) * (H - B - 26)) : 0
+          const hgt = c ? Math.max(2, (c / max) * (H - B - 44)) : 0
           return <g key={i} onPointerEnter={() => setHover(i)}>
             <rect className="hit" x={L + i * bw} y={0} width={bw} height={H - B} />
             {c > 0 && <rect className={`s2-fill${hover === i ? ' on' : ''}`} x={L + i * bw + 1} y={H - B - hgt} width={Math.max(1, bw - 2)} height={hgt} rx={1.5} />}
           </g>
         })}
         {marks.map((m, k) => <g key={m.label} className="mark">
-          <line x1={xv(m.v)} x2={xv(m.v)} y1={14 + k * 0} y2={H - B} />
-          <text x={xv(m.v)} y={10 + (k % 2) * 0} textAnchor={k === marks.length - 1 ? 'end' : 'middle'}>{m.label} {fmtMs(m.v)}</text>
+          <line x1={xv(m.v)} x2={xv(m.v)} y1={14 + k * 12} y2={H - B} />
+          <text x={xv(m.v) + 4} y={10 + k * 12} textAnchor="start">{m.label} {fmtMs(m.v)}</text>
         </g>)}
         <g className="axis">{[0, 0.25, 0.5, 0.75, 1].map(f => <text key={f} className="x" x={L + f * pw} y={H - 5} textAnchor={f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}>{fmtMs(10 ** (lo + f * (hi - lo)))}</text>)}</g>
       </svg>

@@ -295,3 +295,24 @@ test('samples are deterministic, labelled and contain detectable cold starts', (
   assert.ok(Math.abs(c.penaltyMs - 75000) < 15000, `penalty ${c.penaltyMs}`)
   assert.ok(SAMPLES.every(s => s.blurb.length > 0))
 })
+
+test('toJobs strips queueing visible in TTFT or a queue column from service time', () => {
+  assert.equal(toJobs([{ t: 0, lat: 9000, queue: 6000, ok: true }])[0].s, 3000)
+  const reqs: Req[] = [
+    { t: 0, lat: 5000, ttft: 300, ok: true }, { t: 1, lat: 5100, ttft: 310, ok: true },
+    { t: 2, lat: 65000, ttft: 60300, ok: true }, // waited a minute before the first token
+  ]
+  const j = toJobs(reqs)
+  assert.equal(j[0].s, 5000)
+  assert.equal(j[2].s, 65000 - (60300 - 3 * 310))
+})
+
+test('replaying each sample with its own policy reproduces the logged tail', () => {
+  for (const s of SAMPLES) {
+    const reqs = generate(s.id)
+    const c = detectColdStarts(reqs)
+    const r = simulate(toJobs(reqs, c.idx, c.medianLat), s.policy, { series: false })
+    const logged = latencyStats(reqs.map(x => x.lat), 20)
+    assert.ok(Math.abs(r.p95 - logged.p95) / logged.p95 < 0.15, `${s.id}: replay p95 ${r.p95} vs logged ${logged.p95}`)
+  }
+})

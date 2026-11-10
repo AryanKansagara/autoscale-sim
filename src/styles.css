@@ -250,11 +250,11 @@ th small { display: block; font-weight: 400; font-size: 12px; }
 .chart .axis text.x { text-anchor: middle; }
 .chart .panel-label text { fill: var(--ink-3); font: 500 10px var(--font-mono); letter-spacing: .06em; }
 .chart .hit { fill: transparent; }
-.s1-fill { fill: color-mix(in srgb, var(--s1) 26%, transparent); }
+.s1-fill { fill: color-mix(in srgb, var(--s1) 28%, var(--surface)); }
 .s1-line { fill: none; stroke: var(--s1); stroke-width: 2; stroke-linejoin: round; }
 .s2-fill { fill: var(--s2); transition: fill .15s; }
 .s2-fill.on { fill: color-mix(in srgb, var(--s2) 70%, var(--ink)); }
-.s3-fill { fill: color-mix(in srgb, var(--s3) 55%, transparent); }
+.s3-fill { fill: color-mix(in srgb, var(--s3) 60%, var(--surface)); }
 .s4-line { fill: none; stroke: var(--s4); stroke-width: 2; stroke-linejoin: round; }
 .s1-dot { fill: var(--s1); stroke: var(--surface); stroke-width: 2; }
 .s2-dot { fill: var(--s2); stroke: var(--surface); stroke-width: 2; opacity: .75; }

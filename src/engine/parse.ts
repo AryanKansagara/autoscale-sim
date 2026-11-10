@@ -98,7 +98,7 @@ export const FORMATS: Record<Format, string> = {
 }
 
 export interface FieldSpec { key: FieldKey; label: string; required?: boolean; aliases: string[] }
-export type FieldKey = 'time' | 'latency' | 'end' | 'ttft' | 'firstToken' | 'status' | 'inTok' | 'outTok' | 'replica'
+export type FieldKey = 'time' | 'latency' | 'end' | 'ttft' | 'firstToken' | 'queue' | 'status' | 'inTok' | 'outTok' | 'replica'
 
 /** Aliases are normalized header names, most specific first. */
 export const FIELDS: FieldSpec[] = [
@@ -107,6 +107,7 @@ export const FIELDS: FieldSpec[] = [
   { key: 'end', label: 'Finished at (if no latency)', aliases: ['endtime', 'end_time', 'completed_at', 'finished_at', 'response_time_at'] },
   { key: 'ttft', label: 'Time to first token', aliases: ['ttft_ms', 'ttft', 'time_to_first_token_ms', 'time_to_first_token', 'first_token_ms'] },
   { key: 'firstToken', label: 'First token at (if no TTFT)', aliases: ['completionstarttime', 'completion_start_time', 'first_token_at', 'first_token_time'] },
+  { key: 'queue', label: 'Queue / wait time', aliases: ['queue_ms', 'queue_time_ms', 'time_in_queue_ms', 'queue_duration_ms', 'wait_ms', 'queue_time', 'time_in_queue', 'queue_duration'] },
   { key: 'status', label: 'Status', aliases: ['status_code', 'http_status', 'status', 'response_status', 'code', 'outcome', 'result'] },
   { key: 'inTok', label: 'Input tokens', aliases: ['prompt_tokens', 'input_tokens', 'usage_prompt_tokens', 'response_usage_prompt_tokens', 'tokens_in', 'in_tokens'] },
   { key: 'outTok', label: 'Output tokens', aliases: ['completion_tokens', 'output_tokens', 'usage_completion_tokens', 'response_usage_completion_tokens', 'tokens_out', 'out_tokens'] },
@@ -226,6 +227,13 @@ export function validate(csv: { rows: string[][]; lines: number[] }, map: Mappin
       if (ttft < 0 || ttft > lat + 1) issues.push({ line, level: 'warn', message: `TTFT ${Math.round(ttft)} ms is outside 0..latency; ignored` })
       else q.ttft = ttft
     }
+    if (map.queue !== undefined) {
+      const qv = parseNum(get(r, 'queue')) * k
+      if (Number.isFinite(qv)) {
+        if (qv < 0 || qv > lat + 1) issues.push({ line, level: 'warn', message: `Queue time ${Math.round(qv)} ms is outside 0..latency; ignored` })
+        else q.queue = qv
+      }
+    }
     if (map.status !== undefined) {
       const st = parseStatus(get(r, 'status'))
       if (st) { q.ok = st.ok; if (st.timeout) q.timeout = true; if (st.code) q.status = st.code }
@@ -250,6 +258,6 @@ export function mergeReqs(a: Req[], b: Req[]): Req[] {
 }
 
 export function reqsToCsv(reqs: Req[]): string {
-  return toCsv([['timestamp', 'latency_ms', 'ttft_ms', 'status', 'input_tokens', 'output_tokens', 'replica_id'],
-    ...reqs.map(r => [new Date(r.t).toISOString(), Math.round(r.lat), r.ttft === undefined ? '' : Math.round(r.ttft), r.status ?? (r.timeout ? 'timeout' : r.ok ? 200 : 500), r.inTok ?? '', r.outTok ?? '', r.replica ?? ''])])
+  return toCsv([['timestamp', 'latency_ms', 'ttft_ms', 'queue_ms', 'status', 'input_tokens', 'output_tokens', 'replica_id'],
+    ...reqs.map(r => [new Date(r.t).toISOString(), Math.round(r.lat), r.ttft === undefined ? '' : Math.round(r.ttft), r.queue === undefined ? '' : Math.round(r.queue), r.status ?? (r.timeout ? 'timeout' : r.ok ? 200 : 500), r.inTok ?? '', r.outTok ?? '', r.replica ?? ''])])
 }

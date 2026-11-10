@@ -158,7 +158,7 @@ function Overview({ project, a, update }: TabProps) {
           </div>
         )}
         <div className="inline-fields" style={{ marginTop: 14, maxWidth: 520 }}>
-          <label className="field"><span>Idle gap before a cold start (s)</span><input type="number" min={30} step={30} value={project.coldGapSec} onChange={e => update({ coldGapSec: Math.max(30, Number(e.target.value) || 300) })} /></label>
+          <label className="field"><span>Cold-start idle gap (s)</span><input type="number" min={30} step={30} value={project.coldGapSec} onChange={e => update({ coldGapSec: Math.max(30, Number(e.target.value) || 300) })} /></label>
           <label className="field"><span>Client timeout (s)</span><input type="number" min={1} value={project.timeoutMs / 1000} onChange={e => update({ timeoutMs: Math.max(1, Number(e.target.value) || 120) * 1000 })} /></label>
         </div>
       </div>
@@ -214,7 +214,7 @@ function Replay({ project, a, range, update }: TabProps) {
       <div className="panel sticky-side">
         <div className="panel-head"><h2>Policy</h2><span className="muted small">{fmtRange(range)}</span></div>
         <PolicyForm p={project.policy} onChange={p => update({ policy: p })} />
-        <p className="muted small">Replays every logged request in order. Service time is the logged latency, with detected cold starts swapped for the warm median so they are not counted twice.</p>
+        <p className="muted small">Replays every logged request in order. Service time is the logged latency minus logged waiting (queue time, excess TTFT or a detected boot), so queueing and cold starts are not counted twice.</p>
       </div>
       <div>
         <div className="kpis">

@@ -1,5 +1,6 @@
 import type { Policy, Req } from './types.ts'
 import { rng } from './stats.ts'
+import { simulate } from './sim.ts'
 
 export interface SampleDef { id: string; name: string; blurb: string; gpu: string; policy: Policy }
 
@@ -32,8 +33,8 @@ function gauss(r: () => number) { return Math.sqrt(-2 * Math.log(r() || 1e-12)) 
 const logn = (r: () => number, med: number, sigma: number) => med * Math.exp(sigma * gauss(r))
 
 /**
- * Logs as a scale-to-zero deployment would have produced them: requests after a long idle gap pay a
- * cold start, which is what the detector and simulator have to find.
+ * Synthetic logs for a scale-to-zero deployment: requests after a long idle gap pay a cold start,
+ * which is what the detector and simulator have to find.
  */
 export function generate(id: string): Req[] {
   const r = rng(id === 'chat-llm' ? 42 : 99)
@@ -70,15 +71,19 @@ export function generate(id: string): Req[] {
     }
   }
   out.sort((a, b) => a.t - b.t)
-  // Cold starts and queueing as the real (scale-to-zero, scale-down 15 min) deployment saw them.
-  const idle = (chat ? 900 : 300) * 1000
-  const coldMs = chat ? 75000 : 45000
-  let lastEnd = -Infinity
-  for (const q of out) {
-    if (q.t - lastEnd > idle) { q.lat += coldMs * (0.85 + r() * 0.3); if (q.ttft !== undefined) q.ttft += coldMs; if (q.lat > 120000) { q.ok = false; q.timeout = true; q.status = 504 } }
-    lastEnd = Math.max(lastEnd, q.t + q.lat)
+  // Logged latency is what the deployment as configured would have produced: replay the service times
+  // through the sample's own policy, then add each request's queue and boot wait.
+  const def = SAMPLES.find(s => s.id === id)!
+  const sim = simulate(out.map(q => ({ t: q.t, s: q.lat })), def.policy, { series: false, perRequest: true })
+  out.forEach((q, i) => {
+    const w = sim.waits![i] * (sim.coldFlags![i] ? 0.85 + r() * 0.3 : 1)
+    q.lat += w
+    if (q.ttft !== undefined) q.ttft += w
+    // The image server logs its queue time; the chat gateway only has TTFT.
+    if (!chat) q.queue = Math.round(w)
+    if (q.lat > 120000) { q.ok = false; q.timeout = true; q.status = 504 }
     q.t = Math.round(q.t); q.lat = Math.round(q.lat); if (q.ttft !== undefined) q.ttft = Math.round(q.ttft)
-  }
+  })
   return out
 }
 
