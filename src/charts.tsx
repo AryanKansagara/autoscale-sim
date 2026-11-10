@@ -17,7 +17,7 @@ export function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, n
 }
 
 export const fmtMs = (ms: number) => !Number.isFinite(ms) ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : ms < 60000 ? `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)} s` : `${(ms / 60000).toFixed(1)} min`
-const niceMax = (v: number) => { if (!(v > 0)) return 1; const e = 10 ** Math.floor(Math.log10(v)); const m = v / e; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * e }
+const niceMax = (v: number) => { if (!(v > 0)) return 1; const e = 10 ** Math.floor(Math.log10(v)); const m = v / e; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : m <= 7.5 ? 7.5 : 10) * e }
 const timeLabel = (t: number, span: number) => {
   const d = new Date(t)
   return span > 2 * 86_400_000 ? d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }) : `${String(d.getUTCHours()).padStart(2, '0')}:00`

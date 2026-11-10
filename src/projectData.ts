@@ -37,7 +37,7 @@ export async function createSampleProject(sampleId: string): Promise<Project> {
   ]
   snapshots[1].at = snapshots[0].at + 1
   return saveProject({
-    ...base, name: def.name, policy: { ...def.policy }, gpu: def.gpu, sampleId, snapshots,
+    ...base, name: def.name, policy: { ...def.policy }, slo: { ...def.slo }, gpu: def.gpu, sampleId, snapshots,
     imports: [{ id: uuid(), kind: 'plain', fileName: `synthetic request log (${new Date(SAMPLE_START).toISOString().slice(0, 10)}, 7 days)`, rows: reqs.length, skipped: 0, at: Date.now() }],
   })
 }

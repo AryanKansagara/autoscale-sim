@@ -484,7 +484,9 @@ th small { display: block; font-weight: 400; font-size: 12px; }
   .facts div:nth-child(odd) { border-right: 0; }
   .project-grid { grid-template-columns: 1fr; }
   .toolbar { width: 100%; }
-  .toolbar select { flex: 1; min-width: 0; }
+  .toolbar select { flex: 1 1 100%; min-width: 0; }
+  .toolbar .btn { flex: 1; }
+  .proj-head > div { min-width: 0; }
   .kpi b { font-size: 1.4rem; }
   .strip-cell b { font-size: 9px; }
   .policy .inline-fields { grid-template-columns: 1fr 1fr; }

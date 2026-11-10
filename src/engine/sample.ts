@@ -1,19 +1,21 @@
-import type { Policy, Req } from './types.ts'
+import type { Policy, Req, Slo } from './types.ts'
 import { rng } from './stats.ts'
 import { simulate } from './sim.ts'
 
-export interface SampleDef { id: string; name: string; blurb: string; gpu: string; policy: Policy }
+export interface SampleDef { id: string; name: string; blurb: string; gpu: string; policy: Policy; slo: Slo }
 
 export const SAMPLES: SampleDef[] = [
   {
     id: 'chat-llm', name: 'Chat LLM endpoint', gpu: 'H100',
     blurb: '7 days of a 70B chat model: diurnal traffic, quiet nights, a nightly batch job at 02:00 UTC.',
     policy: { minReplicas: 0, maxReplicas: 6, concurrency: 8, targetUtil: 0.7, windowSec: 60, scaleDownDelaySec: 900, coldStartSec: 75, gpuHourly: 6.5 },
+    slo: { p95Ms: 25000, p99Ms: 45000, coldRate: 0.005, errorRate: 0.01 },
   },
   {
     id: 'image-gen', name: 'Image model, spiky', gpu: 'A100',
     blurb: '7 days of an SDXL-style endpoint: a trickle of traffic with sudden campaign spikes.',
     policy: { minReplicas: 0, maxReplicas: 8, concurrency: 1, targetUtil: 0.8, windowSec: 60, scaleDownDelaySec: 300, coldStartSec: 45, gpuHourly: 4.0 },
+    slo: { p95Ms: 6000, p99Ms: 15000, coldRate: 0.005, errorRate: 0.01 },
   },
 ]
 

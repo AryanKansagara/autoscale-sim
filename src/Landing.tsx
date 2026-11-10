@@ -78,10 +78,10 @@ export function Landing() {
             <div className="console-body">
               <div className="console-kpis">
                 <div><small className="mono">GPU COST / DAY</small><b>${fmtN(cost)}</b><span className={r.cost > base.cost ? 'up' : 'down'}>{r.cost >= base.cost ? '+' : '−'}${fmtN(Math.abs(r.cost - base.cost))} vs scale-to-zero</span></div>
-                <div><small className="mono">P99 LATENCY</small><b>{fmtMs(p99)}</b><span>{r.p99 <= 30000 ? 'meets 30 s SLO' : 'misses 30 s SLO'}</span></div>
+                <div><small className="mono">P99 LATENCY</small><b>{fmtMs(p99)}</b><span>{r.p99 <= def.slo.p99Ms ? `meets ${def.slo.p99Ms / 1000} s SLO` : `misses ${def.slo.p99Ms / 1000} s SLO`}</span></div>
                 <div><small className="mono">COLD-START HITS</small><b>{fmtN(cold)}</b><span>{fmtN(r.n)} requests</span></div>
               </div>
-              <ReplayChart series={r.series} sloMs={30000} compact label="Requests, replicas and p95 latency for the replayed day" />
+              <ReplayChart series={r.series} sloMs={def.slo.p95Ms} compact label="Requests, replicas and p95 latency for the replayed day" />
               <div className="console-controls">
                 <label className="slider-field"><span className="row between"><span>Min replicas</span><output className="mono">{minR}</output></span>
                   <input type="range" min={0} max={4} value={minR} onPointerDown={touch} onKeyDown={touch} onChange={e => { touch(); setMinR(Number(e.target.value)) }} /></label>

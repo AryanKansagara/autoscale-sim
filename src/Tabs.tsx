@@ -258,7 +258,7 @@ function SloTable({ checks, was }: { checks: ReturnType<typeof checkSlo>; was?: 
 function Sweep({ project, a, range, update }: TabProps) {
   const { cells } = useSweep(project, a, range)
   const rec = useMemo(() => cells ? recommend(cells, project.slo) : null, [cells, project.slo])
-  if (!cells) return <div className="panel"><div className="boot" role="status" style={{ padding: 60 }}><span className="spinner" /> Replaying {SWEEP_MINS.length * SWEEP_DELAYS.length} policies over {fmtRange(range).toLowerCase()}</div></div>
+  if (!cells) return <div className="panel"><div className="boot" role="status" style={{ padding: 60 }}><span className="spinner" /> Replaying {SWEEP_MINS.length * SWEEP_DELAYS.length} policies over {(range === 'all' ? 'all days' : fmtRange(range))}</div></div>
   const apply = (c: SweepCell) => { update({ policy: { ...project.policy, minReplicas: c.minReplicas, maxReplicas: Math.max(project.policy.maxReplicas, c.minReplicas), scaleDownDelaySec: c.scaleDownDelaySec } }); toast(`Policy set to min ${c.minReplicas}, scale-down ${dur(c.scaleDownDelaySec)}`, { tone: 'ok' }) }
   const front = new Set(rec?.frontier ?? [])
   const id = (c: SweepCell) => `${c.minReplicas}-${c.scaleDownDelaySec}`
@@ -269,7 +269,7 @@ function Sweep({ project, a, range, update }: TabProps) {
     <>
       {rec && <div className={`banner ${rec.meets ? 'good' : 'warn'}`}>
         <span>{rec.meets
-          ? <>Cheapest policy on the frontier that meets your SLOs: <b>min {rec.cell.minReplicas} replicas, scale-down {dur(rec.cell.scaleDownDelaySec)}</b>, p99 {fmtMs(rec.cell.r.p99)}, {money(rec.cell.r.cost)} for {fmtRange(range).toLowerCase()}.</>
+          ? <>Cheapest policy on the frontier that meets your SLOs: <b>min {rec.cell.minReplicas} replicas, scale-down {dur(rec.cell.scaleDownDelaySec)}</b>, p99 {fmtMs(rec.cell.r.p99)}, {money(rec.cell.r.cost)} for {(range === 'all' ? 'all days' : fmtRange(range))}.</>
           : <>No policy in the grid meets every SLO. Lowest p99: <b>min {rec.cell.minReplicas}, scale-down {dur(rec.cell.scaleDownDelaySec)}</b> at {fmtMs(rec.cell.r.p99)}. Raise max replicas or concurrency, or relax the SLO.</>}</span>
         <button type="button" className="btn sm primary" onClick={() => apply(rec.cell)}>Use this policy</button>
       </div>}
@@ -364,7 +364,7 @@ function Actions({ project, a, range, update }: TabProps) {
               <button type="button" role="radio" aria-checked={which === 'cur'} className={which === 'cur' ? 'on' : ''} onClick={() => setWhich('cur')}>Current</button>
             </div>
           </div>
-          {which === 'rec' && rec && <p className="small">{rec.meets ? 'Cheapest policy on the cost/p99 frontier that meets your latency and cold-start SLOs' : 'Nothing in the sweep meets every SLO; this is the lowest p99'} for {fmtRange(range).toLowerCase()}.</p>}
+          {which === 'rec' && rec && <p className="small">{rec.meets ? 'Cheapest policy on the cost/p99 frontier that meets your latency and cold-start SLOs' : 'Nothing in the sweep meets every SLO; this is the lowest p99'} for {(range === 'all' ? 'all days' : fmtRange(range))}.</p>}
           <div className="seg-control" role="radiogroup" aria-label="Format" style={{ marginBottom: 6 }}>
             {(['yaml', 'json', 'curl'] as const).map(f => <button key={f} type="button" role="radio" aria-checked={fmt === f} className={fmt === f ? 'on' : ''} onClick={() => setFmt(f)}>{f === 'curl' ? 'API call' : f.toUpperCase()}</button>)}
           </div>
