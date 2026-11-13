@@ -212,7 +212,8 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
   for (let k = reps.length - 1; k >= 0 && extra > 0; k--) if (reps[k].end === Infinity) { reps[k].end = Math.max(now, reps[k].ready) + delay; extra-- }
   const billEnd = Math.max(tEnd, now)
   let ms = deadMs
-  for (const r of reps) ms += Math.max(0, Math.min(r.end, billEnd) - r.start)
+  // With an explicit window the next window picks up the tail; otherwise those replicas bill until they scale down.
+  for (const r of reps) ms += Math.max(0, (r.end !== Infinity && opts.end === undefined ? r.end : Math.min(r.end, billEnd)) - r.start)
   const replicaHours = ms / 3_600_000
   const sl = lat.slice().sort(), sw = wait.slice().sort()
   let ws = 0

@@ -1,3 +1,4 @@
+import { isRealSample } from './engine/sample.ts'
 import { useEffect, useRef, useState, useSyncExternalStore, type AnchorHTMLAttributes, type ReactNode } from 'react'
 import { cloudConfigured, deleteAccount, deleteCloudData, exportAll, signIn, signOut, signUp, syncNow, useSync, type SyncStatus } from './sync.ts'
 
@@ -290,7 +291,7 @@ export function Footer() {
         <div className="footer-brand"><Monogram /> <strong>Autoscale Sim</strong></div>
         <nav className="footer-nav" aria-label="Footer"><Link href="/app">Endpoints</Link><Link href="/docs">Docs</Link><Link href="/settings">Settings</Link></nav>
         <p>Built by Aryan Kansagara. Independent project, not affiliated with Baseten.</p>
-        <p className="muted small">Sample endpoints are synthetic. Your logs are processed in your browser and stored on this device unless you sign in to sync.</p>
+        <p className="muted small">Sample endpoints are synthetic, except the BurstGPT one, which replays a real public trace (CC BY 4.0). Your logs are processed in your browser and stored on this device unless you sign in to sync.</p>
       </div>
     </footer>
   )
@@ -312,4 +313,6 @@ export function Empty({ title, children, icon }: { title: string; children?: Rea
   return <div className="empty">{icon ?? <div className="empty-icon" aria-hidden="true" />}<h3>{title}</h3>{children}</div>
 }
 
-export const SyntheticBadge = () => <span className="badge synthetic" title="Generated data, not a real deployment">Synthetic</span>
+export const SyntheticBadge = ({ id }: { id?: string }) => isRealSample(id)
+  ? <span className="badge" title="Real public trace; latency estimated from token counts">Public trace</span>
+  : <span className="badge synthetic" title="Generated data, not a real deployment">Synthetic</span>

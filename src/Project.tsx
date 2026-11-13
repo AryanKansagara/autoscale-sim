@@ -70,7 +70,7 @@ export default function ProjectView({ id, tab: rawTab }: { id: string; tab: stri
       <div className="proj-head">
         <div>
           <div className="eyebrow"><Link href="/app">Endpoints</Link></div>
-          <h1 className="row gap wrap">{project.name} {project.sampleId && <SyntheticBadge />}</h1>
+          <h1 className="row gap wrap">{project.name} {project.sampleId && <SyntheticBadge id={project.sampleId} />}</h1>
           {a && <p className="muted small mono" style={{ margin: 0 }}>{a.reqs.length.toLocaleString()} requests · {a.days.toFixed(1)} days · {project.gpu} at ${project.policy.gpuHourly.toFixed(2)}/h</p>}
         </div>
         {!empty && (

@@ -71,7 +71,7 @@ export function Landing() {
               <Link href="/app?sample=chat-llm&tab=replay" className="btn primary lg">Open the sample endpoint</Link>
               <Link href="/app" className="btn outline lg">Import your logs</Link>
             </div>
-            <p className="hero-note mono">Runs in your browser · no account needed · samples are synthetic</p>
+            <p className="hero-note mono">Runs in your browser · no account needed · synthetic samples plus a real public trace</p>
           </div>
           <div className="console" aria-label="Live replay of a synthetic chat endpoint">
             <div className="console-bar mono"><span className="dot-live" aria-hidden="true" />REPLAY · {def.name.toUpperCase()} · TUE 27 OCT (UTC) · SYNTHETIC</div>
@@ -135,7 +135,7 @@ export function Landing() {
 
       <section className="cta-band">
         <div className="cta-inner">
-          <div><h2>Replay a week in under a second.</h2><p>Two synthetic endpoints are ready: a chat LLM with a nightly batch job, and a spiky image model.</p></div>
+          <div><h2>Replay a week in under a second.</h2><p>Two synthetic endpoints are ready, a chat LLM with a nightly batch job and a spiky image model, plus a week of real ChatGPT arrivals from the public BurstGPT trace.</p></div>
           <div className="row gap wrap">
             <Link href="/app?sample=chat-llm" className="btn primary lg">Chat LLM sample</Link>
             <Link href="/app?sample=image-gen" className="btn outline lg">Image model sample</Link>

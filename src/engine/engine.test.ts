@@ -1,11 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { autoMap, detectFormat, guessUnit, mergeReqs, parseCsv, parseJsonl, parseStatus, reqsToCsv, validate } from './parse.ts'
+import { readFileSync } from 'node:fs'
+import { autoMap, detectFormat, estimateService, guessUnit, mergeReqs, parseCsv, parseJsonl, parseStatus, RELATIVE_ANCHOR, reqsToCsv, validate } from './parse.ts'
 import { arrivalSeries, bootstrapCI, burstiness, detectColdStarts, errorStats, latencyStats, pct, rng, sortNum, tokenSplit } from './stats.ts'
 import { pareto, simulate, sweep, toJobs, type Job } from './sim.ts'
 import { ewmaByHour, forecastTomorrow, prewarm, seasonalNaive } from './forecast.ts'
 import { checkSlo, configJson, configYaml, DEFAULT_POLICY, DEFAULT_SLO, prewarmCron, recommend } from './actions.ts'
-import { generate, SAMPLES } from './sample.ts'
+import { generate, parseTrace, SAMPLES } from './sample.ts'
 import type { Policy, Req } from './types.ts'
 
 const P = (o: Partial<Policy> = {}): Policy => ({ ...DEFAULT_POLICY, minReplicas: 1, maxReplicas: 1, concurrency: 1, targetUtil: 1, coldStartSec: 0, gpuHourly: 1, ...o })
@@ -315,4 +316,89 @@ test('replaying each sample with its own policy reproduces the logged tail', () 
     const logged = latencyStats(reqs.map(x => x.lat), 20)
     assert.ok(Math.abs(r.p95 - logged.p95) / logged.p95 < 0.15, `${s.id}: replay p95 ${r.p95} vs logged ${logged.p95}`)
   }
+})
+
+// ---------- Real public traces ----------
+// Fixtures are the first rows of the Azure LLM inference trace 2023 (Azure/AzurePublicDataset, CC BY 4.0)
+// and BurstGPT_1.csv (HPMLL/BurstGPT, CC BY 4.0), unmodified.
+
+const fixture = (f: string) => readFileSync(new URL(`./fixtures/${f}`, import.meta.url), 'utf8')
+
+test('Azure LLM inference trace: detected, 7-digit fractional timestamps, latency estimated from tokens', () => {
+  const csv = parseCsv(fixture('azure-llm-conv-2023.csv'))
+  assert.equal(detectFormat(csv.rows[0], false), 'azure-llm')
+  const m = autoMap(csv.rows[0])
+  assert.deepEqual([m.time, m.inTok, m.outTok, m.latency], [0, 1, 2, undefined])
+  const v = validate(csv, m)
+  assert.equal(v.reqs.length, 30)
+  assert.equal(v.skipped, 0)
+  // 2023-11-16 18:15:46.6805900,374,44
+  const r = v.reqs[0]
+  assert.equal(r.t, Date.UTC(2023, 10, 16, 18, 15, 46, 681))
+  assert.equal(r.ttft, 150 + 374 * 0.12)
+  assert.equal(r.lat, 150 + 374 * 0.12 + 43 * 25)
+  assert.ok(v.issues.some(i => /estimated from tokens/.test(i.message)))
+})
+
+test('BurstGPT: relative seconds are anchored to a Monday and zero response tokens mean failure', () => {
+  const csv = parseCsv(fixture('burstgpt-1.csv'))
+  assert.equal(detectFormat(csv.rows[0], false), 'burstgpt')
+  const v = validate(csv, autoMap(csv.rows[0]))
+  assert.equal(v.reqs.length, 40)
+  assert.equal(v.reqs[0].t, RELATIVE_ANCHOR + 5000)
+  assert.equal(new Date(RELATIVE_ANCHOR).getUTCDay(), 1)
+  assert.equal(v.reqs.filter(r => !r.ok).length, 2)
+  const failed = v.reqs.find(r => !r.ok)!
+  assert.equal(failed.outTok, 0)
+  assert.equal(failed.lat, failed.ttft)
+})
+
+test('token model is adjustable and estimateService matches a hand calculation', () => {
+  const model = { baseMs: 100, prefillMsPerTok: 0.5, decodeMsPerTok: 10 }
+  assert.deepEqual(estimateService(model, 1000, 101), { ttft: 600, lat: 1600 })
+  const csv = parseCsv('time,input_tokens,output_tokens\n2026-01-05T00:00:00Z,1000,101\n')
+  assert.equal(validate(csv, autoMap(csv.rows[0]), 'auto', model).reqs[0].lat, 1600)
+})
+
+test('no latency and no tokens is still an error; epoch seconds are not treated as relative', () => {
+  const a = parseCsv('time,status\n2026-01-05T00:00:00Z,200\n')
+  assert.equal(validate(a, autoMap(a.rows[0])).reqs.length, 0)
+  const b = parseCsv('time,latency_ms\n1767571200,100\n1767571260,120\n')
+  const v = validate(b, autoMap(b.rows[0]))
+  assert.equal(v.reqs[0].t, 1767571200000)
+  assert.ok(!v.issues.some(i => /since the trace began/.test(i.message)))
+})
+
+test('bundled BurstGPT week parses through the importer and replays with idle-night cold starts', () => {
+  const reqs = parseTrace(readFileSync(new URL('../../public/samples/burstgpt-chatgpt-7d.csv', import.meta.url), 'utf8'))
+  assert.equal(reqs.length, 12845)
+  const days = (reqs[reqs.length - 1].t - reqs[0].t) / 86_400_000
+  assert.ok(days > 6.9 && days < 7)
+  const err = errorStats(reqs)
+  assert.ok(err.errorRate > 0.05 && err.errorRate < 0.09, `failure share ${err.errorRate}`)
+  const f = forecastTomorrow(reqs)
+  assert.equal(f?.days, 7)
+  const def = SAMPLES.find(s => s.id === 'burstgpt')!
+  const cold = detectColdStarts(reqs)
+  const r = simulate(toJobs(reqs, cold.idx, cold.medianLat), def.policy, { series: false })
+  assert.ok(r.coldHits > 0)
+  // A warm replica removes every cold start on this traffic (peak load fits one replica).
+  const warm = simulate(toJobs(reqs, cold.idx, cold.medianLat), { ...def.policy, minReplicas: 1 }, { series: false })
+  assert.ok(warm.coldHits < r.coldHits && warm.cost > r.cost)
+})
+
+test('an idle gap only counts when nothing is in flight', () => {
+  // A 10-minute request is still running when the third request arrives 6.6 minutes after the second finished.
+  const reqs: Req[] = [{ t: T0, lat: 600_000, ok: true }, { t: T0 + 1000, lat: 1000, ok: true }, { t: T0 + 400_000, lat: 9000, ok: true }, { t: T0 + 401_000, lat: 1000, ok: true }]
+  assert.equal(detectColdStarts(reqs, 300).gaps, 0)
+  // Same arrivals without the long request: the gap is real.
+  assert.equal(detectColdStarts(reqs.slice(1), 300).gaps, 1)
+})
+
+test('scale to zero bills boot + service + scale-down delay for a lone request', () => {
+  const r = simulate([{ t: T0, s: 10_000 }], P({ minReplicas: 0, coldStartSec: 60, scaleDownDelaySec: 300 }), { series: false })
+  assert.equal(r.coldHits, 1)
+  assert.equal(r.p50, 70_000)
+  // Replica lives from the arrival through boot (60 s), service (10 s) and the delay (300 s).
+  assert.ok(Math.abs(r.replicaHours - 370 / 3600) < 1e-9)
 })

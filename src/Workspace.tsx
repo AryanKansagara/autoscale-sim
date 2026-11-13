@@ -29,7 +29,7 @@ export default function Workspace() {
     go(`/app/p/${p.id}/data`)
   }
 
-  if (list === null || busy) return <div className="boot" role="status"><span className="spinner" /> {busy ? 'Generating 7 days of synthetic traffic' : 'Opening your endpoints'}</div>
+  if (list === null || busy) return <div className="boot" role="status"><span className="spinner" /> {busy ? 'Loading 7 days of sample traffic' : 'Opening your endpoints'}</div>
 
   return (
     <section className="page">
@@ -47,7 +47,7 @@ export default function Workspace() {
           <article className="onboard-card feature-card">
             <div className="eyebrow">Two minutes</div>
             <h2>Try the sample</h2>
-            <p>Synthetic request logs with real-looking problems: quiet nights that end in cold starts, a nightly batch job that floods the queue, campaign spikes on an image model. Labelled synthetic, fully clickable.</p>
+            <p>Synthetic request logs with real-looking problems: quiet nights that end in cold starts, a nightly batch job that floods the queue, campaign spikes on an image model. Plus a week of real ChatGPT traffic from the public BurstGPT trace (CC BY 4.0).</p>
             <div className="stack-sm">
               {SAMPLES.map(s => (
                 <button key={s.id} type="button" className="sample-btn" onClick={() => void openSample(s.id)}>
@@ -93,7 +93,7 @@ function ProjectCard({ p }: { p: Project }) {
             <input name="n" defaultValue={p.name} autoFocus aria-label="Endpoint name" onBlur={e => e.currentTarget.form?.requestSubmit()} />
           </form>
         ) : <h3><Link href={`/app/p/${p.id}`}>{p.name}</Link></h3>}
-        {p.sampleId && <SyntheticBadge />}
+        {p.sampleId && <SyntheticBadge id={p.sampleId} />}
       </div>
       <dl className="mini-stats">
         <div><dt>Requests</dt><dd>{fmtN(p.imports.reduce((s, i) => s + i.rows, 0))}</dd></div>

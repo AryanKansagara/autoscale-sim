@@ -1,8 +1,11 @@
 import type { Policy, Req, Slo } from './types.ts'
 import { rng } from './stats.ts'
 import { simulate } from './sim.ts'
+import { autoMap, parseCsv, validate } from './parse.ts'
 
-export interface SampleDef { id: string; name: string; blurb: string; gpu: string; policy: Policy; slo: Slo }
+/** A public trace bundled under /public/samples, credited to its authors. */
+export interface TraceSource { file: string; title: string; url: string; licence: string; credit: string }
+export interface SampleDef { id: string; name: string; blurb: string; gpu: string; policy: Policy; slo: Slo; source?: TraceSource }
 
 export const SAMPLES: SampleDef[] = [
   {
@@ -17,7 +20,28 @@ export const SAMPLES: SampleDef[] = [
     policy: { minReplicas: 0, maxReplicas: 8, concurrency: 1, targetUtil: 0.8, windowSec: 60, scaleDownDelaySec: 300, coldStartSec: 45, gpuHourly: 4.0 },
     slo: { p95Ms: 6000, p99Ms: 15000, coldRate: 0.005, errorRate: 0.01 },
   },
+  {
+    id: 'burstgpt', name: 'BurstGPT, real ChatGPT traffic', gpu: 'H100',
+    blurb: 'Real public trace: the first 7 days of ChatGPT requests in BurstGPT (12,845 requests, real arrivals and token counts, latency estimated from tokens).',
+    policy: { minReplicas: 0, maxReplicas: 4, concurrency: 8, targetUtil: 0.7, windowSec: 60, scaleDownDelaySec: 600, coldStartSec: 90, gpuHourly: 6.5 },
+    slo: { p95Ms: 25000, p99Ms: 45000, coldRate: 0.01, errorRate: 0.01 },
+    source: {
+      file: '/samples/burstgpt-chatgpt-7d.csv',
+      title: 'BurstGPT: A Real-World Workload Dataset to Optimize LLM Serving Systems (KDD 2025)',
+      url: 'https://github.com/HPMLL/BurstGPT',
+      licence: 'CC BY 4.0',
+      credit: 'Yuxin Wang, Yuhan Chen, Zeyu Li et al.',
+    },
+  },
 ]
+
+export const isRealSample = (id?: string) => !!id && !!SAMPLES.find(s => s.id === id)?.source
+
+/** Parses a bundled public trace with the same importer users get, so the sample exercises the real path. */
+export function parseTrace(text: string): Req[] {
+  const csv = parseCsv(text)
+  return validate(csv, autoMap(csv.rows[0])).reqs
+}
 
 // Samples start on a fixed Monday so they are identical for everyone.
 export const SAMPLE_START = Date.UTC(2026, 9, 26)

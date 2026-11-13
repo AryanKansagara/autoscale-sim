@@ -1,12 +1,12 @@
 import { useMemo, useRef, useState } from 'react'
-import { autoMap, detectFormat, FIELDS, FORMATS, guessUnit, mergeReqs, parseCsv, parseJsonl, reqsToCsv, validate, type Format, type Mapping } from './engine/parse.ts'
+import { autoMap, DEFAULT_TOKEN_MODEL, describeTokenModel, detectFormat, FIELDS, FORMATS, guessUnit, mergeReqs, needsTokenModel, parseCsv, parseJsonl, reqsToCsv, validate, type Format, type Mapping, type TokenModel } from './engine/parse.ts'
 import type { Req } from './engine/types.ts'
 import { createBlankProject } from './projectData.ts'
 import { putData, saveProject, uuid, type Project } from './store.ts'
 import { RAW_SYNC_LIMIT, useSync } from './sync.ts'
 import { ask, download, go, Link, toast } from './ui.tsx'
 
-interface Pending { id: string; name: string; format: Format; json: boolean; csv: { rows: string[][]; lines: number[] }; map: Mapping; unit: 'ms' | 's' | 'auto'; badLines: number[] }
+interface Pending { id: string; name: string; format: Format; json: boolean; csv: { rows: string[][]; lines: number[] }; map: Mapping; unit: 'ms' | 's' | 'auto'; badLines: number[]; model: TokenModel }
 
 export default function DataTab({ project, ds, update }: { project: Project; ds: Req[]; update(p: Partial<Project>): void }) {
   const [pending, setPending] = useState<Pending[]>([])
@@ -27,7 +27,7 @@ export default function DataTab({ project, ds, update }: { project: Project; ds:
         const t = json ? parseJsonl(text) : { ...parseCsv(text), bad: [] }
         if (t.rows.length < 2) { toast(`${f.name} has no requests in it.`, { tone: 'error' }); continue }
         const map = autoMap(t.rows[0])
-        next.push({ id: uuid(), name: f.name, json, format: detectFormat(t.rows[0], json), csv: t, map, unit: guessUnit(map.latency !== undefined ? t.rows[0][map.latency] : undefined), badLines: t.bad })
+        next.push({ id: uuid(), name: f.name, json, format: detectFormat(t.rows[0], json), csv: t, map, unit: guessUnit(map.latency !== undefined ? t.rows[0][map.latency] : undefined), badLines: t.bad, model: { ...DEFAULT_TOKEN_MODEL } })
       } catch (e) { toast(`${f.name}: ${e instanceof Error ? e.message : 'could not be read'}`, { tone: 'error' }) }
     }
     setPending(p => [...p, ...next])
@@ -39,7 +39,7 @@ export default function DataTab({ project, ds, update }: { project: Project; ds:
     const t = project.sampleId ? await createBlankProject('My endpoint') : project
     const merged = mergeReqs(project.sampleId ? [] : ds, reqs)
     await putData(t.id, merged)
-    const meta = { id: uuid(), kind: p.format, fileName: p.name, rows: reqs.length, skipped, at: Date.now() }
+    const meta = { id: uuid(), kind: p.format, fileName: p.name, rows: reqs.length, skipped, at: Date.now(), ...(needsTokenModel(p.map) ? { note: describeTokenModel(p.model) } : {}) }
     await saveProject({ ...t, imports: [...(project.sampleId ? [] : project.imports), meta], dataMissing: false })
     setPending(x => x.filter(y => y.id !== p.id))
     toast(`Imported ${reqs.length.toLocaleString()} requests${skipped ? `, skipped ${skipped}` : ''}`, { tone: 'ok' })
@@ -53,8 +53,8 @@ export default function DataTab({ project, ds, update }: { project: Project; ds:
         <div className="banner"><span><strong>Start here.</strong> Export a few days of request logs from your gateway or proxy (<Link href="/docs">exact steps</Link>), then drop the file below.</span></div>
       )}
       <div className="panel">
-        <div className="panel-head"><h2>Import request logs</h2><span className="muted small">OpenAI-compatible proxy JSONL · LiteLLM spend logs · any CSV or JSONL</span></div>
-        {project.sampleId && <p className="muted small">This is a synthetic sample, so its data is read-only. Importing here starts a new endpoint. Want to rehearse? <button type="button" className="linkish" onClick={() => download(`${project.sampleId}-requests.csv`, reqsToCsv(ds))}>Download the sample as CSV</button> and drop it back in.</p>}
+        <div className="panel-head"><h2>Import request logs</h2><span className="muted small">OpenAI-compatible proxy JSONL · LiteLLM spend logs · Azure LLM / BurstGPT traces · any CSV or JSONL</span></div>
+        {project.sampleId && <p className="muted small">This is a built-in sample, so its data is read-only. Importing here starts a new endpoint. Want to rehearse? <button type="button" className="linkish" onClick={() => download(`${project.sampleId}-requests.csv`, reqsToCsv(ds))}>Download the sample as CSV</button> and drop it back in.</p>}
         <div className={`drop${drag ? ' over' : ''}`} role="button" tabIndex={0} aria-label="Choose CSV or JSONL files to import"
           onClick={() => input.current?.click()} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.current?.click() } }}
           onDragOver={e => { e.preventDefault(); setDrag(true) }} onDragLeave={() => setDrag(false)}
@@ -73,7 +73,7 @@ export default function DataTab({ project, ds, update }: { project: Project; ds:
           <div className="table-wrap">
             <table>
               <thead><tr><th>File</th><th>Format</th><th className="num">Rows</th><th className="num">Skipped</th><th>When</th></tr></thead>
-              <tbody>{[...project.imports].reverse().map(i => <tr key={i.id}><th scope="row" className="break">{i.fileName}</th><td>{FORMATS[i.kind] ?? i.kind}</td><td className="num">{i.rows.toLocaleString()}</td><td className="num">{i.skipped}</td><td className="small">{new Date(i.at).toLocaleString()}</td></tr>)}</tbody>
+              <tbody>{[...project.imports].reverse().map(i => <tr key={i.id}><th scope="row" className="break">{i.fileName}</th><td>{FORMATS[i.kind] ?? i.kind}{i.note && <div className="muted small">{i.note}</div>}</td><td className="num">{i.rows.toLocaleString()}</td><td className="num">{i.skipped}</td><td className="small">{new Date(i.at).toLocaleString()}</td></tr>)}</tbody>
             </table>
           </div>
           <p className="muted small">{sync.user
@@ -96,7 +96,7 @@ export default function DataTab({ project, ds, update }: { project: Project; ds:
 }
 
 function PendingFile({ p, onChange, onCancel, onCommit }: { p: Pending; onChange(p: Pending): void; onCancel(): void; onCommit(p: Pending, rows: Req[], skipped: number): Promise<void> }) {
-  const v = useMemo(() => validate(p.csv, p.map, p.unit), [p])
+  const v = useMemo(() => validate(p.csv, p.map, p.unit, p.model), [p])
   const [busy, setBusy] = useState(false)
   const headers = p.csv.rows[0] ?? []
   const issues = [...p.badLines.map(line => ({ line, level: 'error' as const, message: 'Not valid JSON; skipped' })), ...v.issues].sort((a, b) => a.line - b.line)
@@ -129,6 +129,17 @@ function PendingFile({ p, onChange, onCancel, onCommit }: { p: Pending; onChange
           </select>
         </label>
       </div>
+      {needsTokenModel(p.map) && <>
+        <h3 className="small strong" style={{ marginTop: 8 }}>Latency model (no latency column)</h3>
+        <p className="muted small">This trace logs arrivals and token counts only. Service time = fixed overhead + prefill per input token + decode per output token. Set these from a benchmark of your model on your GPU.</p>
+        <div className="map-grid">
+          {([['baseMs', 'Fixed overhead (ms)'], ['prefillMsPerTok', 'Prefill (ms per input token)'], ['decodeMsPerTok', 'Decode (ms per output token)']] as const).map(([k, label]) => (
+            <label key={k} className="field"><span>{label}</span>
+              <input type="number" min={0} step="any" value={p.model[k]} onChange={e => { const x = Number(e.target.value); if (Number.isFinite(x) && x >= 0) onChange({ ...p, model: { ...p.model, [k]: x } }) }} />
+            </label>
+          ))}
+        </div>
+      </>}
       <h3 className="small strong" style={{ marginTop: 8 }}>Validation</h3>
       <p className="small">
         <strong className="good-text">{v.reqs.length.toLocaleString()} requests ready</strong> of {(v.total + p.badLines.length).toLocaleString()} rows

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { generate, SAMPLES, SAMPLE_START } from './engine/sample.ts'
+import { generate, parseTrace, SAMPLES, SAMPLE_START } from './engine/sample.ts'
 import { burstiness, detectColdStarts, errorStats, latencyStats, mean, tokenSplit } from './engine/stats.ts'
 import { simulate, toJobs, type Job, type SimResult } from './engine/sim.ts'
 import type { Policy, Req } from './engine/types.ts'
@@ -7,9 +7,24 @@ import { blankProject, getData, getProjects, saveProject, useProjects, uuid, typ
 
 const DAY = 86_400_000
 const cache = new Map<string, Req[]>()
+/** Synthetic samples only; they are generated synchronously. */
 export function sampleReqs(id: string): Req[] | null {
-  if (!SAMPLES.some(s => s.id === id)) return null
+  const def = SAMPLES.find(s => s.id === id)
+  if (!def || def.source) return null
   if (!cache.has(id)) cache.set(id, generate(id))
+  return cache.get(id)!
+}
+
+/** Any sample, including public traces fetched from /samples. */
+export async function loadSample(id: string): Promise<Req[]> {
+  const def = SAMPLES.find(s => s.id === id)
+  if (!def) return []
+  if (!def.source) return sampleReqs(id)!
+  if (!cache.has(id)) {
+    const res = await fetch(def.source.file)
+    if (!res.ok) throw new Error(`Could not load the ${def.name} trace (${res.status})`)
+    cache.set(id, parseTrace(await res.text()))
+  }
   return cache.get(id)!
 }
 
@@ -26,7 +41,7 @@ export async function createSampleProject(sampleId: string): Promise<Project> {
   const existing = getProjects().find(p => p.sampleId === sampleId)
   if (existing) return existing
   const def = SAMPLES.find(s => s.id === sampleId)!
-  const reqs = sampleReqs(sampleId)!
+  const reqs = await loadSample(sampleId)
   const base = blankProject(def.name)
   const cold = detectColdStarts(reqs, base.coldGapSec)
   const jobs = toJobs(reqs, cold.idx, cold.medianLat)
@@ -38,7 +53,7 @@ export async function createSampleProject(sampleId: string): Promise<Project> {
   snapshots[1].at = snapshots[0].at + 1
   return saveProject({
     ...base, name: def.name, policy: { ...def.policy }, slo: { ...def.slo }, gpu: def.gpu, sampleId, snapshots,
-    imports: [{ id: uuid(), kind: 'plain', fileName: `synthetic request log (${new Date(SAMPLE_START).toISOString().slice(0, 10)}, 7 days)`, rows: reqs.length, skipped: 0, at: Date.now() }],
+    imports: [{ id: uuid(), kind: def.source ? 'burstgpt' : 'plain', fileName: def.source ? `${def.source.file.split('/').pop()} (${def.source.licence})` : `synthetic request log (${new Date(SAMPLE_START).toISOString().slice(0, 10)}, 7 days)`, rows: reqs.length, skipped: 0, at: Date.now() }],
   })
 }
 
@@ -52,7 +67,7 @@ export function useProject(id: string) {
   useEffect(() => {
     if (!project) return
     let live = true
-    if (project.sampleId) { setDs(sampleReqs(project.sampleId) ?? []); return }
+    if (project.sampleId) { void loadSample(project.sampleId).catch(() => []).then(d => { if (live) setDs(d) }); return () => { live = false } }
     void getData(project.id).then(d => { if (live) setDs(d ?? []) })
     return () => { live = false }
   }, [project?.id, project?.sampleId, importsKey])

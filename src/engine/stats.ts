@@ -100,10 +100,12 @@ export function detectColdStarts(reqs: Req[], gapSec = 300, factor = 3, minPenal
   const idx: number[] = []
   let gaps = 0
   const lastByReplica = new Map<string, number>()
+  // Idle means nothing in flight: measure from the latest finish so far, not the previous request's finish.
+  let busyUntil = -Infinity
   for (let i = 0; i < reqs.length; i++) {
     const r = reqs[i]
-    const prevT = i ? reqs[i - 1].t + reqs[i - 1].lat : -Infinity
-    const globalGap = i > 0 && r.t - prevT >= gapSec * 1000
+    const globalGap = i > 0 && r.t - busyUntil >= gapSec * 1000
+    busyUntil = Math.max(busyUntil, r.t + r.lat)
     const repPrev = r.replica ? lastByReplica.get(r.replica) : undefined
     const repGap = !globalGap && repPrev === undefined && r.replica !== undefined && i > 0
     if (r.replica) lastByReplica.set(r.replica, r.t + r.lat)

@@ -89,11 +89,13 @@ export function toCsv(rows: (string | number)[][]): string {
 
 // ---------- Formats ----------
 
-export type Format = 'openai-proxy' | 'litellm' | 'plain'
+export type Format = 'openai-proxy' | 'litellm' | 'azure-llm' | 'burstgpt' | 'plain'
 
 export const FORMATS: Record<Format, string> = {
   'openai-proxy': 'OpenAI-compatible proxy log (JSONL)',
   litellm: 'LiteLLM spend logs',
+  'azure-llm': 'Azure LLM inference trace (CSV)',
+  burstgpt: 'BurstGPT trace (CSV)',
   plain: 'Plain CSV / JSONL',
 }
 
@@ -109,8 +111,8 @@ export const FIELDS: FieldSpec[] = [
   { key: 'firstToken', label: 'First token at (if no TTFT)', aliases: ['completionstarttime', 'completion_start_time', 'first_token_at', 'first_token_time'] },
   { key: 'queue', label: 'Queue / wait time', aliases: ['queue_ms', 'queue_time_ms', 'time_in_queue_ms', 'queue_duration_ms', 'wait_ms', 'queue_time', 'time_in_queue', 'queue_duration'] },
   { key: 'status', label: 'Status', aliases: ['status_code', 'http_status', 'status', 'response_status', 'code', 'outcome', 'result'] },
-  { key: 'inTok', label: 'Input tokens', aliases: ['prompt_tokens', 'input_tokens', 'usage_prompt_tokens', 'response_usage_prompt_tokens', 'tokens_in', 'in_tokens'] },
-  { key: 'outTok', label: 'Output tokens', aliases: ['completion_tokens', 'output_tokens', 'usage_completion_tokens', 'response_usage_completion_tokens', 'tokens_out', 'out_tokens'] },
+  { key: 'inTok', label: 'Input tokens', aliases: ['prompt_tokens', 'input_tokens', 'contexttokens', 'context_tokens', 'request_tokens', 'usage_prompt_tokens', 'response_usage_prompt_tokens', 'tokens_in', 'in_tokens'] },
+  { key: 'outTok', label: 'Output tokens', aliases: ['completion_tokens', 'output_tokens', 'generatedtokens', 'generated_tokens', 'response_tokens', 'usage_completion_tokens', 'response_usage_completion_tokens', 'tokens_out', 'out_tokens'] },
   { key: 'replica', label: 'Replica / pod', aliases: ['replica_id', 'replica', 'pod', 'pod_name', 'instance', 'instance_id', 'host', 'hostname', 'worker'] },
 ]
 
@@ -119,6 +121,8 @@ export const norm = (h: string) => h.trim().toLowerCase().replace(/^"|"$/g, '').
 export function detectFormat(headers: string[], json: boolean): Format {
   const h = new Set(headers.map(norm))
   if (h.has('completionstarttime') || (h.has('starttime') && h.has('endtime')) || h.has('api_base') && h.has('spend')) return 'litellm'
+  if (h.has('contexttokens') && h.has('generatedtokens')) return 'azure-llm'
+  if (h.has('request_tokens') && h.has('response_tokens') && h.has('log_type')) return 'burstgpt'
   if (json && [...h].some(k => /(^|_)usage_(prompt|completion)_tokens$/.test(k))) return 'openai-proxy'
   return 'plain'
 }
@@ -179,6 +183,22 @@ export function parseJsonl(text: string): { rows: string[][]; lines: number[]; b
 
 // ---------- Validation ----------
 
+/**
+ * Service time from token counts, for traces that log arrivals and tokens but no latency
+ * (Azure LLM inference traces, BurstGPT). TTFT = fixed + prefill per input token; then one decode step per further output token.
+ */
+export interface TokenModel { baseMs: number; prefillMsPerTok: number; decodeMsPerTok: number }
+/** Roughly a 70B model on one H100 node: ~8k prompt tokens/s prefill, ~40 output tokens/s per stream. */
+export const DEFAULT_TOKEN_MODEL: TokenModel = { baseMs: 150, prefillMsPerTok: 0.12, decodeMsPerTok: 25 }
+export function estimateService(m: TokenModel, inTok: number, outTok: number): { lat: number; ttft: number } {
+  const ttft = m.baseMs + Math.max(0, inTok) * m.prefillMsPerTok
+  return { ttft, lat: ttft + Math.max(0, outTok - 1) * m.decodeMsPerTok }
+}
+export const describeTokenModel = (m: TokenModel) => `latency estimated from tokens: ${m.baseMs} ms + ${m.prefillMsPerTok} ms/input token + ${m.decodeMsPerTok} ms/output token`
+
+/** Traces with relative times (seconds since the trace began) are placed on this Monday, 00:00 UTC. */
+export const RELATIVE_ANCHOR = Date.UTC(2023, 0, 2)
+
 export interface Issue { line: number; level: 'error' | 'warn'; message: string }
 export interface Validation { reqs: Req[]; issues: Issue[]; total: number; skipped: number; unit: 'ms' | 's' }
 
@@ -193,13 +213,24 @@ export function parseStatus(raw: string): { ok: boolean; timeout: boolean; code?
   return null
 }
 
-export function validate(csv: { rows: string[][]; lines: number[] }, map: Mapping, unit: 'ms' | 's' | 'auto' = 'auto'): Validation {
+/** True when latency has to come from the token model: no latency or end time, but token counts. */
+export const needsTokenModel = (map: Mapping) => map.latency === undefined && map.end === undefined && (map.inTok !== undefined || map.outTok !== undefined)
+
+export function validate(csv: { rows: string[][]; lines: number[] }, map: Mapping, unit: 'ms' | 's' | 'auto' = 'auto', model: TokenModel = DEFAULT_TOKEN_MODEL): Validation {
   const issues: Issue[] = []
   const reqs: Req[] = []
   const get = (r: string[], k: FieldKey) => map[k] === undefined ? '' : (r[map[k]!] ?? '')
+  const est = needsTokenModel(map)
   if (map.time === undefined) issues.push({ line: 1, level: 'error', message: 'Map a column to "Request time".' })
-  if (map.latency === undefined && map.end === undefined) issues.push({ line: 1, level: 'error', message: 'Map "Latency" or "Finished at" so latency can be computed.' })
+  if (map.latency === undefined && map.end === undefined && !est) issues.push({ line: 1, level: 'error', message: 'Map "Latency" or "Finished at" so latency can be computed (or token columns to estimate it).' })
   if (issues.length) return { reqs, issues, total: csv.rows.length - 1, skipped: csv.rows.length - 1, unit: 'ms' }
+  if (est) issues.push({ line: 1, level: 'warn', message: `No latency column: ${describeTokenModel(model)}. Adjust the model below to match your hardware.` })
+
+  // Relative times: every sampled value is a plain number of seconds below 1e9 (about 31 years).
+  const head = csv.rows.slice(1, 200).map(r => get(r, 'time').trim()).filter(Boolean)
+  const relative = head.length > 0 && head.every(v => /^\d+(\.\d+)?$/.test(v) && Number(v) < 1e9)
+  if (relative) issues.push({ line: 1, level: 'warn', message: `Times are seconds since the trace began; placed from ${new Date(RELATIVE_ANCHOR).toISOString().slice(0, 10)} 00:00 UTC (a Monday).` })
+  const time = (raw: string) => relative && /^\d+(\.\d+)?$/.test(raw.trim()) ? RELATIVE_ANCHOR + Math.round(Number(raw) * 1000) : parseTime(raw)
 
   // Auto unit: latencies that are mostly under 50 with decimals look like seconds.
   let u: 'ms' | 's' = unit === 'auto' ? 'ms' : unit
@@ -213,14 +244,18 @@ export function validate(csv: { rows: string[][]; lines: number[] }, map: Mappin
   for (let i = 1; i < csv.rows.length; i++) {
     const r = csv.rows[i]
     const line = csv.lines[i]
-    const t = parseTime(get(r, 'time'))
+    const t = time(get(r, 'time'))
     if (!Number.isFinite(t)) { issues.push({ line, level: 'error', message: `Unreadable request time "${get(r, 'time').slice(0, 40)}"` }); skipped++; continue }
+    const inT = parseNum(get(r, 'inTok')), outT = parseNum(get(r, 'outTok'))
     let lat = NaN
-    if (map.latency !== undefined) lat = parseNum(get(r, 'latency')) * k
-    else { const e = parseTime(get(r, 'end')); lat = e - t }
-    if (!Number.isFinite(lat) || lat < 0) { issues.push({ line, level: 'error', message: `Missing or negative latency "${(map.latency !== undefined ? get(r, 'latency') : get(r, 'end')).slice(0, 40)}"` }); skipped++; continue }
-    const q: Req = { t, lat, ok: true }
     let ttft = NaN
+    if (map.latency !== undefined) lat = parseNum(get(r, 'latency')) * k
+    else if (map.end !== undefined) { const e = parseTime(get(r, 'end')); lat = e - t }
+    else if (Number.isFinite(inT) || Number.isFinite(outT)) ({ lat, ttft } = estimateService(model, Number.isFinite(inT) ? inT : 0, Number.isFinite(outT) ? outT : 1))
+    if (!Number.isFinite(lat) || lat < 0) { issues.push({ line, level: 'error', message: est ? 'No token counts to estimate latency from' : `Missing or negative latency "${(map.latency !== undefined ? get(r, 'latency') : get(r, 'end')).slice(0, 40)}"` }); skipped++; continue }
+    const q: Req = { t, lat, ok: true }
+    // BurstGPT and similar traces mark failed requests with zero response tokens.
+    if (est && outT === 0 && map.status === undefined) q.ok = false
     if (map.ttft !== undefined) ttft = parseNum(get(r, 'ttft')) * k
     else if (map.firstToken !== undefined) ttft = parseTime(get(r, 'firstToken')) - t
     if (Number.isFinite(ttft)) {
@@ -239,7 +274,6 @@ export function validate(csv: { rows: string[][]; lines: number[] }, map: Mappin
       if (st) { q.ok = st.ok; if (st.timeout) q.timeout = true; if (st.code) q.status = st.code }
       else if (get(r, 'status').trim() && warnedStatus++ < 20) issues.push({ line, level: 'warn', message: `Unknown status "${get(r, 'status').slice(0, 30)}", counted as success` })
     }
-    const inT = parseNum(get(r, 'inTok')), outT = parseNum(get(r, 'outTok'))
     if (Number.isFinite(inT) && inT >= 0) q.inTok = inT
     if (Number.isFinite(outT) && outT >= 0) q.outTok = outT
     const rep = get(r, 'replica').trim()

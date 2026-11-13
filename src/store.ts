@@ -5,7 +5,7 @@ import { DEFAULT_POLICY, DEFAULT_SLO } from './engine/actions.ts'
 
 export type Dataset = Req[]
 
-export interface ImportMeta { id: string; kind: Format; fileName: string; rows: number; skipped: number; at: number }
+export interface ImportMeta { id: string; kind: Format; fileName: string; rows: number; skipped: number; at: number; note?: string }
 
 /** A saved policy experiment: the policy and its replay summary (no per-request data). */
 export interface Snapshot {
