@@ -56,7 +56,7 @@ export default function Docs() {
       <h1>Getting request logs out</h1>
       <p className="muted">Autoscale Sim needs one row per inference request: when it arrived and how long it took. Time to first token, status, token counts and the replica that served it make the analysis sharper. Export a few days (a week shows weekday patterns) and drop the file on an endpoint&rsquo;s <strong>Data</strong> tab. Formats are detected from the header, every column can be re-mapped, and rejected rows are listed by line number. Last reviewed November 2026.</p>
       <nav className="toc" aria-label="On this page">
-        <a href="#fields">Fields</a><a href="#litellm">LiteLLM</a><a href="#openai">OpenAI-compatible proxy</a><a href="#ttft">Logging TTFT</a><a href="#nginx">nginx / gateways</a><a href="#csv">Plain CSV</a><a href="#model">How the replay works</a><a href="#pricing">Pricing assumptions</a><a href="#privacy">Privacy</a>
+        <a href="#fields">Fields</a><a href="#litellm">LiteLLM</a><a href="#openai">OpenAI-compatible proxy</a><a href="#ttft">Logging TTFT</a><a href="#nginx">nginx / gateways</a><a href="#traces">Public traces</a><a href="#csv">Plain CSV</a><a href="#model">How the replay works</a><a href="#pricing">Pricing assumptions</a><a href="#privacy">Privacy</a>
       </nav>
 
       <h2 id="fields">Fields</h2>
@@ -82,15 +82,24 @@ export default function Docs() {
       <p><code>$request_time</code> is in seconds; the importer detects that. Add <code>$upstream_addr</code> to approximate the replica.</p>
       <Code label="nginx.conf" code={NGINX} />
 
+      <h2 id="traces">Public traces: Azure LLM inference and BurstGPT</h2>
+      <p>Published LLM workload traces log arrivals and token counts but no latency. Drop them in unchanged; the importer recognises both layouts, and checked on 13 November 2026 against the files linked here:</p>
+      <ul>
+        <li><strong>Azure LLM inference trace 2023</strong> (<a href="https://github.com/Azure/AzurePublicDataset" target="_blank" rel="noreferrer">Azure/AzurePublicDataset</a>, <code>AzureLLMInferenceTrace_code.csv</code> and <code>_conv.csv</code>, CC BY 4.0): <code>TIMESTAMP,ContextTokens,GeneratedTokens</code>, timestamps with seven fractional digits, about one hour of production traffic each (8,819 and 19,366 requests).</li>
+        <li><strong>BurstGPT</strong> (<a href="https://github.com/HPMLL/BurstGPT" target="_blank" rel="noreferrer">HPMLL/BurstGPT</a>, Wang et al., KDD 2025, CC BY 4.0): <code>Timestamp,Model,Request tokens,Response tokens,Total tokens,Log Type</code>. Timestamps are seconds since the trace began; they are placed from Monday 2 January 2023 00:00 UTC, so weekday and hour labels are positional, not calendar dates. Rows with zero response tokens are failures. Filter one <code>Model</code> per endpoint.</li>
+      </ul>
+      <p>Latency is estimated per request as <em>fixed overhead + prefill × input tokens + decode × (output tokens − 1)</em>. The default (150 ms, 0.12 ms per input token, 25 ms per output token, roughly a 70B model on an H100 node at moderate batch) is editable on import; set it from a benchmark of your model. Arrival times, burstiness, idle gaps and token mixes are real; latencies are modelled, so there are no logged cold starts to detect and the replay adds them from your cold-start setting.</p>
+      <p>The <strong>BurstGPT, real ChatGPT traffic</strong> sample is the first 7 days of ChatGPT rows from <code>BurstGPT_1.csv</code> (12,845 requests, unmodified rows), credited to Yuxin Wang, Yuhan Chen, Zeyu Li et al. under CC BY 4.0.</p>
+
       <h2 id="csv">Plain CSV</h2>
       <Code label="requests.csv" code={CSV} />
 
       <h2 id="model">How the replay works</h2>
       <ul>
-        <li><strong>Cold-start detection.</strong> A request is a cold start if it arrives after an idle gap (default 5 minutes; set per endpoint) or on a replica id seen for the first time, and is at least 3× the median latency and 2 s slower. The median extra latency becomes the suggested cold-start time.</li>
+        <li><strong>Cold-start detection.</strong> A request is a cold start if it arrives after an idle gap (default 5 minutes; set per endpoint) (nothing in flight, measured from the latest finish so far) or on a replica id seen for the first time, and is at least 3× the median latency and 2 s slower. The median extra latency becomes the suggested cold-start time.</li>
         <li><strong>Service time.</strong> Each request is replayed with its logged latency minus any time it spent waiting, because the simulator adds queueing and cold starts itself. If your server logs queue time (vLLM <code>time_in_queue</code>, Triton queue duration, a gateway <code>queue_ms</code>), it is subtracted directly. Otherwise TTFT above 3× the median TTFT counts as waiting, detected cold starts use the warm median, and requests that arrived during a detected boot lose the remaining boot time. Logs with neither queue time nor TTFT will overstate replayed latency during bursts.</li>
         <li><strong>Autoscaler.</strong> Each replica serves up to <em>concurrency target</em> requests at once; the rest queue first in, first out. Every 5 s the autoscaler averages in-flight plus queued requests over the <em>autoscaling window</em> and wants <code>ceil(load / (concurrency × utilization))</code> replicas, clamped to min and max. New replicas serve after the <em>cold start</em>. Replicas are removed only after load stays below capacity for the <em>scale-down delay</em>, idle ones first. With zero replicas, the first request starts one immediately.</li>
-        <li><strong>Cost.</strong> Replicas are billed from the moment they start booting until removal, at your $ per replica-hour.</li>
+        <li><strong>Cost.</strong> Replicas are billed from the moment they start booting until removal, at your $ per replica-hour. Replaying the whole log, replicas still up after the last request are billed until the scale-down delay removes them; replaying one day, billing stops at midnight.</li>
         <li><strong>Statistics.</strong> Percentile confidence intervals are bootstraps (100 to 200 resamples). Burstiness is the busiest minute over the mean minute and the coefficient of variation of inter-arrival times (1 is random, above 1 is bursty).</li>
         <li><strong>Forecast.</strong> Hourly demand for the next UTC day by seasonal naive (same weekday last week once a week of data exists, otherwise yesterday) and an EWMA per hour of day; the last full day is held out and the better method is used. Pre-warm replicas per hour come from Little&rsquo;s law using the busiest-minute factor for that hour.</li>
         <li><strong>Limits.</strong> The replay assumes service time does not depend on how busy a replica is, which understates latency for batched LLM servers near their concurrency limit. Set the concurrency target from a load test so that assumption holds.</li>
