@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { dayOptions, busiestDay, experiment, fmtRange, sliceJobs, useAnalysis, useProject, type Analysis } from './projectData.ts'
+import { dayOptions, busiestDay, experiment, fmtRange, useAnalysis, useProject, type Analysis } from './projectData.ts'
 import type { Project as P } from './store.ts'
 import { Empty, go, isTyping, Link, Modal, SyntheticBadge, toast } from './ui.tsx'
 
@@ -30,10 +30,9 @@ export default function ProjectView({ id, tab: rawTab }: { id: string; tab: stri
 
   const saveExperiment = () => {
     if (!project || !a) return
-    const s = sliceJobs(a.jobs, range, a.reqs)
     const p = project.policy
     const label = `min ${p.minReplicas}, max ${p.maxReplicas}, scale-down ${p.scaleDownDelaySec}s, concurrency ${p.concurrency}`
-    const snap = experiment(s.jobs, p, label, range)
+    const snap = experiment(a.jobs, a.reqs, p, label, range)
     const before = project.snapshots
     void update({ snapshots: [...before, snap] })
     toast(`Saved experiment: ${label}`, { tone: 'ok', undo: () => void update({ snapshots: before }) })

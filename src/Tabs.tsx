@@ -2,12 +2,12 @@ import { useDeferredValue, useEffect, useMemo, useState, useSyncExternalStore } 
 import { checkSlo, configCurl, configJson, configYaml, prewarmCron, recommend } from './engine/actions.ts'
 import { forecastTomorrow, hourly, prewarm } from './engine/forecast.ts'
 import { reqsToCsv, toCsv } from './engine/parse.ts'
-import { simulate, SWEEP_DELAYS, SWEEP_MINS, type SweepCell } from './engine/sim.ts'
-import { arrivalSeries } from './engine/stats.ts'
+import { SWEEP_DELAYS, SWEEP_MINS, type SweepCell } from './engine/sim.ts'
+import { arrivalPattern, arrivalSeries, fixed } from './engine/stats.ts'
 import type { Policy, Slo } from './engine/types.ts'
 import { fmtMs, HourBars, LatencyHist, ParetoChart, ReplayChart, ReplicaStrip, SeriesBars } from './charts.tsx'
 import type { Tab, TabProps } from './Project.tsx'
-import { fmtRange, sliceJobs, type Analysis } from './projectData.ts'
+import { fmtRange, isLegacyExperiment, rangeBounds, replay, replayWindow, sliceJobs, type Analysis } from './projectData.ts'
 import type { Project, Snapshot } from './store.ts'
 import { ask, Code, download, Empty, fmtN, fmtPct, signed, toast } from './ui.tsx'
 
@@ -51,9 +51,9 @@ export function useSweep(p: Project, a: Analysis, range: string): { cells: Sweep
       const w = worker
       const onMsg = (e: MessageEvent<{ key: string; cells: SweepCell[] }>) => { if (e.data.key === key) { w.removeEventListener('message', onMsg); done(e.data.cells) } }
       w.addEventListener('message', onMsg)
-      w.postMessage({ jobs: s.jobs, policy: p.policy, start: s.start, end: s.end, key })
+      w.postMessage({ jobs: s.jobs, policy: p.policy, ...replayWindow(a.reqs, range), key })
     } catch {
-      void import('./engine/sim.ts').then(m => done(m.sweep(s.jobs, p.policy, undefined, undefined, { start: s.start, end: s.end })))
+      void import('./engine/sim.ts').then(m => done(m.sweep(s.jobs, p.policy, undefined, undefined, replayWindow(a.reqs, range))))
     }
   }, [key])
   return { cells, key }
@@ -62,9 +62,9 @@ export function useSweep(p: Project, a: Analysis, range: string): { cells: Sweep
 function useReplay(p: Policy, a: Analysis, range: string, bucketSec?: number) {
   const dp = useDeferredValue(p)
   return useMemo(() => {
-    const s = sliceJobs(a.jobs, range, a.reqs)
+    const s = rangeBounds(a.reqs, range)
     const span = (s.end - s.start) / 1000
-    return simulate(s.jobs, dp, { start: s.start, end: s.end, bucketSec: bucketSec ?? (span > 3 * 86400 ? 1800 : 300) })
+    return replay(a.jobs, a.reqs, range, dp, { bucketSec: bucketSec ?? (span > 3 * 86400 ? 1800 : 300) })
   }, [a, range, dp, bucketSec])
 }
 
@@ -96,17 +96,17 @@ function Overview({ project, a, update }: TabProps) {
   return (
     <>
       <div className="kpis">
-        <Kpi label="Requests" value={fmtN(a.reqs.length)} note={`${b.meanRps.toFixed(2)} req/s mean over ${a.days.toFixed(1)} days`} />
+        <Kpi label="Requests" value={fmtN(a.reqs.length)} note={`${fixed(b.meanRps, 2)} req/s mean over ${a.days.toFixed(1)} days`} />
         <Kpi label="p95 latency (95% CI)" value={fmtMs(a.lat.p95)} note={`${fmtMs(a.lat.ci95[0])} to ${fmtMs(a.lat.ci95[1])}`} />
         <Kpi label="p99 latency (95% CI)" value={fmtMs(a.lat.p99)} note={`${fmtMs(a.lat.ci99[0])} to ${fmtMs(a.lat.ci99[1])}`} />
         <Kpi label="Errors + timeouts" value={fmtPct(a.err.errorRate, 2)} note={`${fmtN(a.err.errors)} failed, ${fmtN(a.err.timeouts)} timed out`} tone={a.err.errorRate > project.slo.errorRate ? 'bad' : undefined} />
       </div>
 
       <div className="panel">
-        <div className="panel-head"><h2>Arrivals</h2><span className="muted small mono">UTC · peak-to-mean {b.peakToMean.toFixed(1)}× · inter-arrival CV {b.interArrivalCv.toFixed(2)}</span></div>
+        <div className="panel-head"><h2>Arrivals</h2><span className="muted small mono">UTC · peak-to-mean {b.peakToMean.toFixed(1)}× · inter-arrival CV {fixed(b.interArrivalCv, 2)}</span></div>
         <SeriesBars counts={series.counts} t0={series.t0} bucketMs={bucket * 1000} marks={a.cold.idx.map(i => a.reqs[i].t)} label={`Requests per ${bucket / 60} minutes with detected cold starts`} />
         <p className="muted small" style={{ marginTop: 10 }}>
-          {b.interArrivalCv > 1.5 ? 'Bursty: arrivals clump far more than random (Poisson) traffic would, so the autoscaler will see sudden load it has to boot replicas for.' : b.interArrivalCv > 0.8 ? 'Roughly random arrivals. Bursts are moderate.' : 'Very regular arrivals, typical of a scheduled client.'}
+          {arrivalPattern(b.interArrivalCv)}
           {' '}Busiest minute: {b.perMinPeak} requests vs {b.perMinMean.toFixed(1)} on average.
         </p>
       </div>
@@ -432,7 +432,7 @@ function History({ project, update }: TabProps) {
             <thead><tr><th><span className="sr-only">Compare</span></th><th>Experiment</th><th>Range</th><th className="num">p95</th><th className="num">p99</th><th className="num">Cold hits</th><th className="num">Replica-h</th><th className="num">Cost</th><th /></tr></thead>
             <tbody>{list.map(s => <tr key={s.id} className={sel.includes(s.id) ? 'selected' : ''}>
               <td><input type="checkbox" checked={sel.includes(s.id)} onChange={() => pick(s.id)} aria-label={`Compare ${s.label}`} /></td>
-              <th scope="row"><input className="table-input plain" defaultValue={s.label} aria-label="Experiment name" onBlur={e => { const v = e.target.value.trim(); if (v && v !== s.label) update({ snapshots: project.snapshots.map(x => x.id === s.id ? { ...x, label: v } : x) }) }} /><small className="muted">{new Date(s.at).toLocaleString()}{s.note ? ` · ${s.note}` : ''}</small></th>
+              <th scope="row"><input className="table-input plain" defaultValue={s.label} aria-label="Experiment name" onBlur={e => { const v = e.target.value.trim(); if (v && v !== s.label) update({ snapshots: project.snapshots.map(x => x.id === s.id ? { ...x, label: v } : x) }) }} /><small className="muted">{new Date(s.at).toLocaleString()}{s.note ? ` · ${s.note}` : ''}</small>{isLegacyExperiment(s) && <small className="warn-text" title={LEGACY_HELP}>Older calculation: counts only the hours between the first and last request of the day, so it does not match Replay. To redo it, press Use, choose this range on the Replay tab and save again.</small>}</th>
               <td className="small">{fmtRange(s.range)}</td>
               <td className="num">{fmtMs(s.result.p95)}</td><td className="num">{fmtMs(s.result.p99)}</td>
               <td className="num">{fmtN(s.result.coldHits)}</td><td className="num">{s.result.replicaHours.toFixed(1)}</td><td className="num">{money(s.result.cost)}</td>
@@ -459,10 +459,12 @@ const RESULT_ROWS: [keyof Snapshot['result'], string, (v: number) => string, boo
   ['cost', 'Cost', v => money(v), true], ['costPer1k', 'Cost per 1k requests', v => money(v, 2), true], ['peakReplicas', 'Peak replicas', String, true],
 ]
 
+const LEGACY_HELP = 'Saved before experiments used the same replay window as the Replay tab.'
+
 function Compare({ a, b }: { a: Snapshot; b: Snapshot }) {
   return (
     <div className="panel">
-      <div className="panel-head"><h2>Compare</h2>{a.range !== b.range && <span className="warn-text small">Different replay ranges: compare cost per 1k requests, not totals.</span>}</div>
+      <div className="panel-head"><h2>Compare</h2>{a.range !== b.range && <span className="warn-text small">Different replay ranges: compare cost per 1k requests, not totals.</span>}{(isLegacyExperiment(a) || isLegacyExperiment(b)) && <span className="warn-text small" title={LEGACY_HELP}>An older single-day experiment is selected: its cost and replica-hours cover only the first to the last request of the day, so they are not comparable. Save it again.</span>}</div>
       <div className="table-wrap">
         <table className="compare">
           <thead><tr><th /><th>{a.label}</th><th>{b.label}</th><th className="num">Change</th></tr></thead>
