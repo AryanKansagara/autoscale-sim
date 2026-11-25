@@ -3,7 +3,7 @@ import { checkSlo, configCurl, configJson, configYaml, prewarmCron, recommend } 
 import { forecastTomorrow, hourly, prewarm } from './engine/forecast.ts'
 import { reqsToCsv, toCsv } from './engine/parse.ts'
 import { simulate, SWEEP_DELAYS, SWEEP_MINS, type SweepCell } from './engine/sim.ts'
-import { arrivalSeries } from './engine/stats.ts'
+import { arrivalPattern, arrivalSeries, fixed } from './engine/stats.ts'
 import type { Policy, Slo } from './engine/types.ts'
 import { fmtMs, HourBars, LatencyHist, ParetoChart, ReplayChart, ReplicaStrip, SeriesBars } from './charts.tsx'
 import type { Tab, TabProps } from './Project.tsx'
@@ -96,17 +96,17 @@ function Overview({ project, a, update }: TabProps) {
   return (
     <>
       <div className="kpis">
-        <Kpi label="Requests" value={fmtN(a.reqs.length)} note={`${b.meanRps.toFixed(2)} req/s mean over ${a.days.toFixed(1)} days`} />
+        <Kpi label="Requests" value={fmtN(a.reqs.length)} note={`${fixed(b.meanRps, 2)} req/s mean over ${a.days.toFixed(1)} days`} />
         <Kpi label="p95 latency (95% CI)" value={fmtMs(a.lat.p95)} note={`${fmtMs(a.lat.ci95[0])} to ${fmtMs(a.lat.ci95[1])}`} />
         <Kpi label="p99 latency (95% CI)" value={fmtMs(a.lat.p99)} note={`${fmtMs(a.lat.ci99[0])} to ${fmtMs(a.lat.ci99[1])}`} />
         <Kpi label="Errors + timeouts" value={fmtPct(a.err.errorRate, 2)} note={`${fmtN(a.err.errors)} failed, ${fmtN(a.err.timeouts)} timed out`} tone={a.err.errorRate > project.slo.errorRate ? 'bad' : undefined} />
       </div>
 
       <div className="panel">
-        <div className="panel-head"><h2>Arrivals</h2><span className="muted small mono">UTC · peak-to-mean {b.peakToMean.toFixed(1)}× · inter-arrival CV {b.interArrivalCv.toFixed(2)}</span></div>
+        <div className="panel-head"><h2>Arrivals</h2><span className="muted small mono">UTC · peak-to-mean {b.peakToMean.toFixed(1)}× · inter-arrival CV {fixed(b.interArrivalCv, 2)}</span></div>
         <SeriesBars counts={series.counts} t0={series.t0} bucketMs={bucket * 1000} marks={a.cold.idx.map(i => a.reqs[i].t)} label={`Requests per ${bucket / 60} minutes with detected cold starts`} />
         <p className="muted small" style={{ marginTop: 10 }}>
-          {b.interArrivalCv > 1.5 ? 'Bursty: arrivals clump far more than random (Poisson) traffic would, so the autoscaler will see sudden load it has to boot replicas for.' : b.interArrivalCv > 0.8 ? 'Roughly random arrivals. Bursts are moderate.' : 'Very regular arrivals, typical of a scheduled client.'}
+          {arrivalPattern(b.interArrivalCv)}
           {' '}Busiest minute: {b.perMinPeak} requests vs {b.perMinMean.toFixed(1)} on average.
         </p>
       </div>

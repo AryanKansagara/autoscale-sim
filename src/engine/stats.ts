@@ -127,6 +127,16 @@ export function arrivalSeries(reqs: Req[], bucketSec = 60): { t0: number; bucket
   return { t0, bucketSec, counts }
 }
 
+/** Fixed decimals, or a dash when there is no number to show (as fmtMs does for latencies). */
+export const fixed = (v: number, digits: number) => Number.isFinite(v) ? v.toFixed(digits) : '—'
+
+/** What the inter-arrival CV says about the traffic; says why when there is no CV. */
+export function arrivalPattern(cv: number): string {
+  if (!Number.isFinite(cv)) return 'Not enough requests at different times to describe the arrival pattern (needs at least 3).'
+  if (cv > 1.5) return 'Bursty: arrivals clump far more than random (Poisson) traffic would, so the autoscaler will see sudden load it has to boot replicas for.'
+  return cv > 0.8 ? 'Roughly random arrivals. Bursts are moderate.' : 'Very regular arrivals, typical of a scheduled client.'
+}
+
 export function burstiness(reqs: Req[]) {
   const s = arrivalSeries(reqs, 60)
   const m = mean(s.counts)
