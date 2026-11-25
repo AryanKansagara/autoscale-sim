@@ -28,6 +28,9 @@ function Tip({ x, w, children }: { x: number; w: number; children: ReactNode }) 
   return <div className="chart-tip" style={{ left }}>{children}</div>
 }
 
+/** Replica counts are averages over a bucket: whole numbers as they are, fractions to two digits. */
+const count = (v: number) => v > 0 && v < 0.01 ? '<0.01' : String(Math.round(v * 100) / 100)
+
 /** Requests, replicas and p95 latency as three aligned panels over the same time axis, one shared crosshair. */
 export function ReplayChart({ series, sloMs, compact, label }: { series: SimPoint[]; sloMs?: number; compact?: boolean; label: string }) {
   const [ref, w] = useWidth<HTMLDivElement>()
@@ -41,7 +44,7 @@ export function ReplayChart({ series, sloMs, compact, label }: { series: SimPoin
   const x = (i: number) => L + (n === 1 ? 0 : (i / (n - 1)) * pw)
   const bw = Math.max(1, pw / n - (n > 200 ? 0 : 1))
   const maxN = niceMax(Math.max(...series.map(s => s.n)))
-  const maxR = Math.max(1, ...series.map(s => s.replicas))
+  const maxR = Math.max(1, ...series.map(s => s.peak))
   const lats = series.map(s => s.p95).filter(Number.isFinite)
   const maxL = niceMax(Math.max(sloMs ?? 0, ...lats) * 1.05)
   const y1 = (v: number) => h1 - (v / maxN) * h1
@@ -53,6 +56,8 @@ export function ReplayChart({ series, sloMs, compact, label }: { series: SimPoin
   const area = (get: (s: SimPoint) => number, y: (v: number) => number, base: number) => `${step(get, y)}H${x(n - 1)}V${base}H${L}Z`
   let latPath = ''
   series.forEach((s, i) => { if (Number.isFinite(s.p95)) latPath += `${latPath && Number.isFinite(series[i - 1]?.p95) ? 'L' : 'M'}${x(i).toFixed(1)} ${y3(s.p95).toFixed(1)}` })
+  // A bucket with no measured neighbour is not part of any line: mark it with a dot.
+  const lonely = (i: number) => Number.isFinite(series[i].p95) && !Number.isFinite(series[i - 1]?.p95) && !Number.isFinite(series[i + 1]?.p95)
   const ticks = Array.from({ length: compact ? 4 : 7 }, (_, k) => Math.round((k / (compact ? 3 : 6)) * (n - 1)))
   const hs = hover !== null ? series[hover] : null
   const onMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -86,12 +91,13 @@ export function ReplayChart({ series, sloMs, compact, label }: { series: SimPoin
         <path className="s1-line" d={step(s => s.ready, y2)} />
         {sloMs ? <line className="slo-line" x1={L} x2={w - R} y1={y3(sloMs)} y2={y3(sloMs)} /> : null}
         <path className="s4-line" d={latPath} />
+        {series.map((s, i) => lonely(i) ? <circle key={i} className="s4-dot" cx={x(i)} cy={y3(s.p95)} r={2.5} /> : null)}
         {hs && <line className="crosshair" x1={x(hover!)} x2={x(hover!)} y1={0} y2={top3 + h3} />}
       </svg>
       {hs && <Tip x={x(hover!)} w={w}>
         <b>{new Date(hs.t).toUTCString().slice(0, 22)} UTC</b>
         <span><i className="sw s2" />{hs.n} requests</span>
-        <span><i className="sw s1" />{hs.ready} ready{hs.replicas > hs.ready ? `, ${hs.replicas - hs.ready} booting` : ''}</span>
+        <span><i className="sw s1" />{count(hs.ready)} ready{hs.replicas > hs.ready ? `, ${count(hs.replicas - hs.ready)} booting` : ''}{hs.peak !== hs.replicas ? ` on average, peak ${hs.peak}` : ''}</span>
         <span><i className="sw s4 line" />p95 {fmtMs(hs.p95)} · wait {fmtMs(hs.wait)}</span>
         {hs.queue > 0 && <span>Max queue {hs.queue}</span>}
       </Tip>}

@@ -26,7 +26,11 @@ export function toJobs(reqs: Req[], coldIdx: number[] = [], medianLat?: number):
   })
 }
 
-export interface SimPoint { t: number; replicas: number; ready: number; queue: number; n: number; p95: number; wait: number }
+/**
+ * One bucket of the timeline. `replicas` and `ready` are averages over the bucket, so a replica up for 1 of 5 minutes counts 0.2
+ * and the area under `replicas` is the billed time; `peak` is the most replicas up at once.
+ */
+export interface SimPoint { t: number; replicas: number; ready: number; peak: number; queue: number; n: number; p95: number; wait: number }
 export interface SimResult {
   n: number
   p50: number
@@ -77,9 +81,10 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
 
   let reps: Replica[] = []
   let deadMs = 0
+  const gone: Replica[] = []
   const retire = () => {
     // Drop removed replicas from the working set so per-event scans stay small.
-    for (const r of reps) if (r.end !== Infinity) deadMs += r.end - r.start
+    for (const r of reps) if (r.end !== Infinity) { deadMs += r.end - r.start; if (wantSeries) gone.push(r) }
     reps = reps.filter(r => r.end === Infinity)
   }
   for (let i = 0; i < minR; i++) reps.push({ start: t0, ready: t0, end: Infinity, active: 0 })
@@ -122,7 +127,7 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
   let belowSince: number | null = null
 
   const nb = wantSeries ? Math.max(1, Math.ceil((tEnd - t0 + 1) / bucket)) : 0
-  const bRep = new Float64Array(nb), bReady = new Float64Array(nb), bQ = new Float64Array(nb), bN = new Float64Array(nb), bW = new Float64Array(nb)
+  const bQ = new Float64Array(nb), bN = new Float64Array(nb), bW = new Float64Array(nb)
   const bLat: number[][] = wantSeries ? Array.from({ length: nb }, () => []) : []
   const bi = (t: number) => Math.min(nb - 1, Math.max(0, Math.floor((t - t0) / bucket)))
 
@@ -199,9 +204,7 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
       if (a > peak) peak = a
       if (wantSeries) {
         const b = bi(now)
-        let rd = 0
-        for (const r of reps) if (r.end === Infinity && r.ready <= now) rd++
-        bRep[b] = Math.max(bRep[b], a); bReady[b] = Math.max(bReady[b], rd); bQ[b] = Math.max(bQ[b], queue.length - qh)
+        bQ[b] = Math.max(bQ[b], queue.length - qh)
       }
     }
   }
@@ -213,7 +216,8 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
   const billEnd = Math.max(tEnd, now)
   let ms = deadMs
   // With an explicit window the next window picks up the tail; otherwise those replicas bill until they scale down.
-  for (const r of reps) ms += Math.max(0, (r.end !== Infinity && opts.end === undefined ? r.end : Math.min(r.end, billEnd)) - r.start)
+  const billedTo = (r: Replica) => r.end !== Infinity && opts.end === undefined ? r.end : Math.min(r.end, billEnd)
+  for (const r of reps) ms += Math.max(0, billedTo(r) - r.start)
   const replicaHours = ms / 3_600_000
   const sl = lat.slice().sort(), sw = wait.slice().sort()
   let ws = 0
@@ -222,13 +226,15 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
 
   const series: SimPoint[] = []
   if (wantSeries) {
-    let lastRep = minR, lastReady = minR
-    for (let b = 0; b < nb; b++) {
-      // Buckets without a tick (shorter than 5 s) inherit the previous counts.
-      if (bRep[b] === 0 && b > 0) { bRep[b] = lastRep; bReady[b] = lastReady }
-      lastRep = bRep[b]; lastReady = bReady[b]
-      const l = bLat[b].sort((x, y) => x - y)
-      series.push({ t: t0 + b * bucket, replicas: bRep[b], ready: bReady[b], queue: bQ[b], n: bN[b], p95: l.length ? pct(l, 0.95) : NaN, wait: bN[b] ? bW[b] / bN[b] : 0 })
+    const spans = [...gone, ...reps].map(r => ({ start: r.start, ready: r.ready, end: billedTo(r) }))
+    const last = spans.reduce((m, r) => Math.max(m, r.end), Math.max(tEnd, now))
+    // Without an explicit end the replicas left after the last request are billed until they go: show that tail as well (bounded, in case the policy never catches up).
+    const ns = opts.end === undefined ? Math.max(nb, Math.min(nb + 2000, Math.ceil((last - t0) / bucket))) : nb
+    const replicas = timeline(spans.map(r => [r.start, r.end]), t0, bucket, ns, last)
+    const ready = timeline(spans.map(r => [r.ready, r.end]), t0, bucket, ns, last)
+    for (let b = 0; b < ns; b++) {
+      const l = (bLat[b] ?? []).sort((x, y) => x - y)
+      series.push({ t: t0 + b * bucket, replicas: replicas.avg[b], ready: ready.avg[b], peak: replicas.peak[b], queue: bQ[b] ?? 0, n: bN[b] ?? 0, p95: l.length ? pct(l, 0.95) : NaN, wait: bN[b] ? bW[b] / bN[b] : 0 })
     }
   }
   return {
@@ -239,6 +245,32 @@ export function simulate(jobs: Job[], p: Policy, opts: { start?: number; end?: n
     ...(opts.perRequest ? { waits: wait, coldFlags } : {}),
   }
 }
+
+/** How many of the [from, to) intervals are open in each of n buckets: on average over the part of the bucket before `last`, and at most. */
+function timeline(intervals: [number, number][], t0: number, bucket: number, n: number, last: number): { avg: Float64Array; peak: Float64Array } {
+  const avg = new Float64Array(n), peak = new Float64Array(n)
+  const ev: [number, number][] = []
+  for (const [from, to] of intervals) if (to > from) ev.push([from, 1], [to, -1])
+  ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]) // at one instant, ends before starts
+  let open = 0, e = 0
+  for (let b = 0; b < n; b++) {
+    const lo = t0 + b * bucket, hi = lo + bucket
+    const cover = Math.min(hi, last) - lo
+    // The bucket that starts at the window's end has no width: it repeats the count up to there.
+    if (cover <= 0) { avg[b] = peak[b] = lo === last ? openAt(intervals, last) : 0; continue }
+    while (e < ev.length && ev[e][0] <= lo) open += ev[e++][1]
+    let area = 0, at = lo, top = open
+    for (; e < ev.length && ev[e][0] < hi; e++) {
+      area += open * (ev[e][0] - at); at = ev[e][0]
+      open += ev[e][1]
+      top = Math.max(top, open)
+    }
+    avg[b] = (area + open * (lo + cover - at)) / cover
+    peak[b] = top
+  }
+  return { avg, peak }
+}
+const openAt = (intervals: [number, number][], t: number) => intervals.reduce((c, [from, to]) => c + (from < t && to >= t ? 1 : 0), 0)
 
 export interface SweepCell { minReplicas: number; scaleDownDelaySec: number; r: SimResult }
 

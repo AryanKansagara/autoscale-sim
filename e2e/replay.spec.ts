@@ -75,6 +75,29 @@ test('min replicas: one warm replica bills the whole day, removes every cold sta
   await expect(kpi(page, 'p99 latency').locator('b')).toHaveText('1.0 min')
 })
 
+test('replay chart: replicas drop to 0 after the scale-down delay and return at 12:00; isolated latencies are drawn (issue #6)', async ({ page }) => {
+  const chart = page.getByRole('img', { name: /^Replay of/ })
+  await expect(chart.locator('circle.s4-dot')).toHaveCount(3) // 02:00, 02:10 and 12:00: no measured neighbours
+  // Hover by time of day: the plot spans 00:00 to 24:00 between a 48 px and a 10 px margin.
+  const tip = page.locator('.chart-tip')
+  const hover = async (hhmm: string) => {
+    const box = (await chart.boundingBox())!
+    const [h, m] = hhmm.split(':').map(Number)
+    await page.mouse.move(box.x + 48 + (h * 60 + m) / 1440 * (box.width - 58), box.y + 130)
+    await expect(tip).toContainText(`${hhmm}`)
+  }
+  await hover('02:00'); await expect(tip).toContainText('0.8 ready, 0.2 booting')
+  await hover('02:15'); await expect(tip).toContainText('1 ready')
+  await hover('02:25'); await expect(tip).toContainText('0.2 ready on average, peak 1')
+  for (const t of ['02:30', '07:00', '11:55', '12:20', '23:00']) { await hover(t); await expect(tip).toContainText('0 ready') }
+  await hover('12:05'); await expect(tip).toContainText('1 ready')
+  // The drawn line: back on the baseline, not a flat line until midnight.
+  const d = (await chart.locator('path.s1-line').getAttribute('d'))!
+  const ys = [...d.matchAll(/V([\d.]+)/g)].map(x => Number(x[1]))
+  const base = Math.max(...ys)
+  expect(ys.filter(y => y === base).length).toBeGreaterThan(250) // of 288 steps
+})
+
 test('the SLO check follows the replay: scale-to-zero misses, one warm replica meets', async ({ page }) => {
   const row = (name: string) => page.locator('tr', { has: page.getByRole('rowheader', { name }) })
   // Targets are the defaults: p95 <= 15 s, p99 <= 30 s, cold starts <= 1%, errors <= 1%.
