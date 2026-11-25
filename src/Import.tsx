@@ -6,7 +6,7 @@ import { putData, saveProject, uuid, type Project } from './store.ts'
 import { RAW_SYNC_LIMIT, useSync } from './sync.ts'
 import { ask, download, go, Link, toast } from './ui.tsx'
 
-interface Pending { id: string; name: string; format: Format; json: boolean; csv: { rows: string[][]; lines: number[] }; map: Mapping; unit: 'ms' | 's' | 'auto'; badLines: number[]; model: TokenModel }
+interface Pending { id: string; name: string; format: Format; json: boolean; csv: ReturnType<typeof parseCsv>; map: Mapping; unit: 'ms' | 's' | 'auto'; badLines: number[]; model: TokenModel }
 
 export default function DataTab({ project, ds, update }: { project: Project; ds: Req[]; update(p: Partial<Project>): void }) {
   const [pending, setPending] = useState<Pending[]>([])

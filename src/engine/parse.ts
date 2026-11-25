@@ -1,6 +1,9 @@
 import type { Req } from "./types.ts"
 
-export function parseCsv(text: string): { rows: string[][]; lines: number[] } {
+/** How the text ended: 'open' = inside the last row (no newline after it), 'quote' = inside a quoted field. Undefined = after a newline. */
+export type CsvTail = 'open' | 'quote'
+
+export function parseCsv(text: string): { rows: string[][]; lines: number[]; tail?: CsvTail } {
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
   const delim = sniffDelimiter(text)
   const rows: string[][] = []
@@ -32,11 +35,12 @@ export function parseCsv(text: string): { rows: string[][]; lines: number[] } {
       rowLine = line
     } else field += c
   }
-  if (field !== '' || row.length) {
+  let tail: CsvTail | undefined = quoted ? 'quote' : undefined
+  if (quoted || field !== '' || row.length) {
     row.push(field)
-    if (row.length > 1 || row[0] !== '') { rows.push(row); lines.push(rowLine) }
+    if (quoted || row.length > 1 || row[0] !== '') { rows.push(row); lines.push(rowLine); tail ??= 'open' }
   }
-  return { rows, lines }
+  return { rows, lines, tail }
 }
 
 function sniffDelimiter(text: string): string {
@@ -216,7 +220,7 @@ export function parseStatus(raw: string): { ok: boolean; timeout: boolean; code?
 /** True when latency has to come from the token model: no latency or end time, but token counts. */
 export const needsTokenModel = (map: Mapping) => map.latency === undefined && map.end === undefined && (map.inTok !== undefined || map.outTok !== undefined)
 
-export function validate(csv: { rows: string[][]; lines: number[] }, map: Mapping, unit: 'ms' | 's' | 'auto' = 'auto', model: TokenModel = DEFAULT_TOKEN_MODEL): Validation {
+export function validate(csv: { rows: string[][]; lines: number[]; tail?: CsvTail }, map: Mapping, unit: 'ms' | 's' | 'auto' = 'auto', model: TokenModel = DEFAULT_TOKEN_MODEL): Validation {
   const issues: Issue[] = []
   const reqs: Req[] = []
   const get = (r: string[], k: FieldKey) => map[k] === undefined ? '' : (r[map[k]!] ?? '')
@@ -241,11 +245,23 @@ export function validate(csv: { rows: string[][]; lines: number[] }, map: Mappin
   const k = u === 's' ? 1000 : 1
   let skipped = 0
   let warnedStatus = 0
+  // Columns a complete row has: the named header columns, or fewer when no row fills them all (exports that leave off empty trailing columns).
+  // The last row does not count when there are others: it is the one a cut file leaves short.
+  let named = csv.rows[0].length
+  while (named > 0 && !csv.rows[0][named - 1].trim()) named--
+  const lastRow = csv.rows.length - 1
+  let widest = 0
+  for (let i = 1; i < Math.max(2, lastRow); i++) widest = Math.max(widest, csv.rows[i]?.length ?? 0)
+  const width = lastRow > 1 ? Math.min(named, widest) : named
+  let shortRows = 0
   for (let i = 1; i < csv.rows.length; i++) {
     const r = csv.rows[i]
     const line = csv.lines[i]
     const t = time(get(r, 'time'))
     if (!Number.isFinite(t)) { issues.push({ line, level: 'error', message: `Unreadable request time "${get(r, 'time').slice(0, 40)}"` }); skipped++; continue }
+    // A file that stops inside its last row: the last value may be cut short, so it cannot be told from a real one.
+    if (i === lastRow && csv.tail === 'quote') { issues.push({ line, level: 'error', message: 'Quoted value is never closed, file may be truncated; row skipped' }); skipped++; continue }
+    if (i === lastRow && csv.tail === 'open' && r.length < width) { issues.push({ line, level: 'error', message: `Row has ${r.length} of ${width} columns, file may be truncated; row skipped` }); skipped++; continue }
     const inT = parseNum(get(r, 'inTok')), outT = parseNum(get(r, 'outTok'))
     let lat = NaN
     let ttft = NaN
@@ -253,6 +269,7 @@ export function validate(csv: { rows: string[][]; lines: number[] }, map: Mappin
     else if (map.end !== undefined) { const e = parseTime(get(r, 'end')); lat = e - t }
     else if (Number.isFinite(inT) || Number.isFinite(outT)) ({ lat, ttft } = estimateService(model, Number.isFinite(inT) ? inT : 0, Number.isFinite(outT) ? outT : 1))
     if (!Number.isFinite(lat) || lat < 0) { issues.push({ line, level: 'error', message: est ? 'No token counts to estimate latency from' : `Missing or negative latency "${(map.latency !== undefined ? get(r, 'latency') : get(r, 'end')).slice(0, 40)}"` }); skipped++; continue }
+    if (r.length < width && shortRows++ < 20) issues.push({ line, level: 'warn', message: `Row has ${r.length} of ${width} columns; the missing ones are treated as empty` })
     const q: Req = { t, lat, ok: true }
     // BurstGPT and similar traces mark failed requests with zero response tokens.
     if (est && outT === 0 && map.status === undefined) q.ok = false
@@ -280,6 +297,7 @@ export function validate(csv: { rows: string[][]; lines: number[] }, map: Mappin
     if (rep) q.replica = rep
     reqs.push(q)
   }
+  if (shortRows > 20) issues.push({ line: csv.lines[lastRow], level: 'warn', message: `${shortRows} rows in all have fewer than ${width} columns` })
   reqs.sort((a, b) => a.t - b.t)
   return { reqs, issues, total: csv.rows.length - 1, skipped, unit: u }
 }
