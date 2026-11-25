@@ -70,7 +70,7 @@ test.describe('tiny trace', () => {
     const current = await downloaded(page, page.getByRole('button', { name: 'Replay timeline (CSV)' }))
     expect(current.name).toBe('endpoint-1-replay-2026-03-02.csv')
     const [header, ...rows] = current.text.trim().split('\n').map(l => l.split(','))
-    expect(header).toEqual(['bucket_start_utc', 'requests', 'replicas', 'ready_replicas', 'max_queue', 'p95_ms', 'mean_wait_ms'])
+    expect(header).toEqual(['bucket_start_utc', 'requests', 'replicas', 'ready_replicas', 'max_queue', 'p95_ms', 'mean_wait_ms', 'peak_replicas'])
     expect(rows).toHaveLength(289) // 24 h / 5 min = 288, plus the bucket that starts at the window's end (as in the engine test: one hour in 10-minute buckets is 7 rows)
     expect(rows[0][0]).toBe('2026-03-02T00:00:00.000Z')
     expect(rows.at(-2)![0]).toBe('2026-03-02T23:55:00.000Z')
@@ -81,6 +81,12 @@ test.describe('tiny trace', () => {
     expect(at('02:00')[5]).toBe('61000') // cold: 60 s boot + 1 s
     expect(at('02:10')[5]).toBe('1000') // the replica from 02:00 is still up (15 min delay): warm, the logged 1 s
     expect(at('12:00')[5]).toBe('61000') // cold again
+    // Replicas, averaged over the bucket: up 02:00 to 02:26 and 12:00 to 12:16:01, then gone (issue #6).
+    expect(['02:00', '02:20', '02:25', '02:30', '11:55', '12:00', '12:15', '12:20', '23:55'].map(t => [t, at(t)[2], at(t)[3], at(t)[7]])).toEqual([
+      ['02:00', '1', '0.8', '1'], ['02:20', '1', '1', '1'], ['02:25', '0.2', '0.2', '1'], ['02:30', '0', '0', '0'], ['11:55', '0', '0', '0'],
+      ['12:00', '1', '0.8', '1'], ['12:15', '0.203333', '0.203333', '1'], ['12:20', '0', '0', '0'], ['23:55', '0', '0', '0'],
+    ])
+    expect(rows.reduce((sum, r) => sum + Number(r[2]) * 300, 0)).toBeCloseTo(2521, 2) // the billed seconds
 
     // Recommended (min 1): a replica from the first bucket to the last, nobody waits.
     await page.getByRole('radio', { name: 'Recommended' }).click()

@@ -397,7 +397,7 @@ function Actions({ project, a, range, update }: TabProps) {
             <h2>Exports</h2>
             <div className="stack-sm">
               <button type="button" className="btn sm outline block" onClick={() => download(`${slug(project.name)}-requests.csv`, reqsToCsv(a.reqs))}>Normalized request log (CSV)</button>
-              <button type="button" className="btn sm outline block" onClick={() => download(`${slug(project.name)}-replay-${range}.csv`, toCsv([['bucket_start_utc', 'requests', 'replicas', 'ready_replicas', 'max_queue', 'p95_ms', 'mean_wait_ms'], ...r.series.map(s => [new Date(s.t).toISOString(), s.n, s.replicas, s.ready, s.queue, Number.isFinite(s.p95) ? s.p95 : '', s.wait])]))}>Replay timeline (CSV)</button>
+              <button type="button" className="btn sm outline block" onClick={() => download(`${slug(project.name)}-replay-${range}.csv`, toCsv([['bucket_start_utc', 'requests', 'replicas', 'ready_replicas', 'max_queue', 'p95_ms', 'mean_wait_ms', 'peak_replicas'], ...r.series.map(s => [new Date(s.t).toISOString(), s.n, s.replicas, s.ready, s.queue, Number.isFinite(s.p95) ? s.p95 : '', s.wait, s.peak])]))}>Replay timeline (CSV)</button>
               <a className="btn sm outline block" href={`/app/p/${project.id}/report${range === 'all' ? '?d=all' : `?d=${range}`}`}>Printable capacity report</a>
             </div>
           </div>
