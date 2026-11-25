@@ -16,6 +16,8 @@ export interface Snapshot {
   policy: Policy
   result: { n: number; p50: number; p95: number; p99: number; meanWaitMs: number; coldHits: number; coldRate: number; replicaHours: number; cost: number; costPer1k: number; peakReplicas: number; hours: number }
   note?: string
+  /** Which replay calculation produced `result`; see EXPERIMENT_CALC in projectData.ts. Missing on older experiments. */
+  calc?: number
 }
 
 export interface Project {

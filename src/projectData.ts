@@ -33,8 +33,28 @@ export function summary(r: SimResult): Snapshot['result'] {
   return rest
 }
 
-export function experiment(jobs: Job[], policy: Policy, label: string, range = 'all', note?: string): Snapshot {
-  return { id: uuid(), label, at: Date.now(), range, policy, result: summary(simulate(jobs, policy, { series: false })), note }
+/**
+ * Snapshot.calc values. Experiments saved before the replay window was shared (no `calc`) replayed a single
+ * day from its first to its last request, so they under-bill idle hours and differ from the Replay tab.
+ */
+export const EXPERIMENT_CALC = 2
+
+/** True for a saved experiment whose numbers came from the old single-day window. */
+export const isLegacyExperiment = (s: Pick<Snapshot, 'range' | 'calc'>) => s.range !== 'all' && !s.calc
+
+/**
+ * The simulation window of a range, used by the Replay tab, the sweep, the report and saved experiments, so the same
+ * log and policy always give the same numbers: a day is the whole UTC day; 'all' is open-ended, so replicas still up
+ * after the last request bill until the scale-down delay removes them (see Docs, Cost).
+ */
+export const replayWindow = (reqs: Req[], range: string): { start?: number; end?: number } => range === 'all' ? {} : rangeBounds(reqs, range)
+
+export function replay(jobs: Job[], reqs: Req[], range: string, policy: Policy, opts: { bucketSec?: number; series?: boolean } = {}): SimResult {
+  return simulate(sliceJobs(jobs, range, reqs).jobs, policy, { ...opts, ...replayWindow(reqs, range) })
+}
+
+export function experiment(jobs: Job[], reqs: Req[], policy: Policy, label: string, range = 'all', note?: string): Snapshot {
+  return { id: uuid(), label, at: Date.now(), range, policy, result: summary(replay(jobs, reqs, range, policy, { series: false })), note, calc: EXPERIMENT_CALC }
 }
 
 export async function createSampleProject(sampleId: string): Promise<Project> {
@@ -47,8 +67,8 @@ export async function createSampleProject(sampleId: string): Promise<Project> {
   const jobs = toJobs(reqs, cold.idx, cold.medianLat)
   // Two experiments so History has something to compare: what runs today, and one warm replica.
   const snapshots = [
-    experiment(jobs, def.policy, 'Current settings (scale to zero)', 'all', 'What the deployment runs today.'),
-    experiment(jobs, { ...def.policy, minReplicas: 1 }, 'One warm replica', 'all'),
+    experiment(jobs, reqs, def.policy, 'Current settings (scale to zero)', 'all', 'What the deployment runs today.'),
+    experiment(jobs, reqs, { ...def.policy, minReplicas: 1 }, 'One warm replica', 'all'),
   ]
   snapshots[1].at = snapshots[0].at + 1
   return saveProject({
