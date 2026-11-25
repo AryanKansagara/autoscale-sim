@@ -16,11 +16,16 @@ for (const { why, csv, rows } of [
   { why: 'one request', csv: 'timestamp,latency_ms\n2026-03-02T02:00:00Z,1000\n', rows: 1 },
   { why: 'two requests at one instant', csv: 'timestamp,latency_ms\n2026-03-02T02:00:00Z,1000\n2026-03-02T02:00:00Z,1200\n', rows: 2 },
   { why: 'two requests ten minutes apart', csv: 'timestamp,latency_ms\n2026-03-02T02:00:00Z,1000\n2026-03-02T02:10:00Z,1000\n', rows: 2 },
+  { why: 'three requests at one instant', csv: 'timestamp,latency_ms\n2026-03-02T02:00:00Z,1000\n2026-03-02T02:00:00Z,1200\n2026-03-02T02:00:00Z,900\n', rows: 3 },
 ]) {
   test(`#3: a log of ${why} shows no NaN on the Traffic tab`, async ({ page }) => {
-    test.fail(true, 'https://github.com/AryanKansagara/autoscale-sim/issues/3')
     await importFile(page, file('few.csv', csv), rows)
     await expect(page.locator('main')).not.toContainText('NaN')
+    await expect(page.locator('main')).toContainText('inter-arrival CV —')
+    await expect(page.locator('main')).not.toContainText('Very regular arrivals')
+    await page.keyboard.press('p')
+    await expect(page.locator('article.report')).toContainText('CV —')
+    await expect(page.locator('article.report')).not.toContainText('NaN')
   })
 }
 

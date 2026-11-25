@@ -3,6 +3,7 @@ import { checkSlo, configYaml, prewarmCron, recommend } from './engine/actions.t
 import { forecastTomorrow, prewarm } from './engine/forecast.ts'
 import { simulate } from './engine/sim.ts'
 import { toCsv } from './engine/parse.ts'
+import { fixed } from './engine/stats.ts'
 import type { Policy } from './engine/types.ts'
 import { fmtMs, ReplayChart, ReplicaStrip } from './charts.tsx'
 import { busiestDay, dayOptions, fmtRange, sliceJobs, useAnalysis, useProject } from './projectData.ts'
@@ -63,7 +64,7 @@ function Body({ project, a }: { project: Project; a: Analysis }) {
         <div className="kpi"><small>Logged p95 (95% CI)</small><b>{fmtMs(a.lat.p95)}</b><p>{fmtMs(a.lat.ci95[0])} to {fmtMs(a.lat.ci95[1])}</p></div>
         <div className="kpi"><small>Logged p99 (95% CI)</small><b>{fmtMs(a.lat.p99)}</b><p>{fmtMs(a.lat.ci99[0])} to {fmtMs(a.lat.ci99[1])}</p></div>
         <div className="kpi"><small>Cold starts detected</small><b>{fmtN(a.cold.idx.length)}</b><p>typical penalty {fmtMs(a.cold.penaltyMs)}</p></div>
-        <div className="kpi"><small>Errors + timeouts</small><b>{fmtPct(errRate, 2)}</b><p>peak-to-mean {a.burst.peakToMean.toFixed(1)}×, CV {a.burst.interArrivalCv.toFixed(2)}</p></div>
+        <div className="kpi"><small>Errors + timeouts</small><b>{fmtPct(errRate, 2)}</b><p>peak-to-mean {a.burst.peakToMean.toFixed(1)}×, CV {fixed(a.burst.interArrivalCv, 2)}</p></div>
       </div>
 
       <h2>Current vs recommended policy</h2>
