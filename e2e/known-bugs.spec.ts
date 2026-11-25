@@ -1,15 +1,19 @@
 import { test, expect } from './test.ts'
-import { chooseFiles, file, fixture, importFile, kpi, setMinReplicas, tab } from './helpers.ts'
+import { chooseFiles, downloaded, file, fixture, importFile, kpi, setMinReplicas, tab } from './helpers.ts'
 
 // Bugs found while writing this suite. Each test states the behaviour the app should have and is marked
 // `test.fail`, so the suite stays green while the bug exists and goes red ("expected to fail but passed")
 // the day it is fixed: delete the `test.fail` line then. The app is deliberately not changed here.
 
 test('#2: a CSV cut inside the last row\'s latency is reported, not imported silently', async ({ page }) => {
-  test.fail(true, 'https://github.com/AryanKansagara/autoscale-sim/issues/2')
   const cut = 'timestamp,latency_ms,status\n2026-03-02T02:00:00Z,1000,200\n2026-03-02T02:10:00Z,1000,200\n2026-03-02T12:00:00Z,10'
   await chooseFiles(page, file('cut.csv', cut))
   await expect(page.getByRole('log', { name: 'Validation issues' })).toContainText('line 4')
+  await expect(page.getByText(/^2 requests ready of 3 rows, 1 skipped\./)).toBeVisible()
+  await page.getByRole('button', { name: 'Import 2 requests' }).click()
+  await tab(page, 'Data').click()
+  const csv = await downloaded(page, page.getByRole('button', { name: 'Download normalized CSV' }))
+  expect(csv.text).not.toContain('T12:00') // the cut row is not in the data
 })
 
 for (const { why, csv, rows } of [
