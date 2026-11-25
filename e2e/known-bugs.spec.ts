@@ -1,9 +1,9 @@
 import { test, expect } from './test.ts'
 import { chooseFiles, downloaded, file, fixture, importFile, kpi, setMinReplicas, tab } from './helpers.ts'
 
-// Bugs found while writing this suite. Each test states the behaviour the app should have and is marked
-// `test.fail`, so the suite stays green while the bug exists and goes red ("expected to fail but passed")
-// the day it is fixed: delete the `test.fail` line then. The app is deliberately not changed here.
+// Bugs found while writing this suite. Each test states the behaviour the app should have. While a bug exists its test is
+// marked `test.fail`, so the suite stays green and goes red ("expected to fail but passed") the day it is fixed: delete
+// the `test.fail` line then, and the test keeps the bug from coming back.
 
 test('#2: a CSV cut inside the last row\'s latency is reported, not imported silently', async ({ page }) => {
   const cut = 'timestamp,latency_ms,status\n2026-03-02T02:00:00Z,1000,200\n2026-03-02T02:10:00Z,1000,200\n2026-03-02T12:00:00Z,10'
@@ -34,7 +34,6 @@ for (const { why, csv, rows } of [
 }
 
 test('#4: a saved experiment has the numbers the Replay tab showed when it was saved', async ({ page }) => {
-  test.fail(true, 'https://github.com/AryanKansagara/autoscale-sim/issues/4')
   await importFile(page, fixture('tiny.csv'), 3)
   await tab(page, 'Replay').click()
   await setMinReplicas(page, 1)

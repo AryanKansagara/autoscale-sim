@@ -30,7 +30,7 @@ test('an imported endpoint, its policy, SLOs and saved experiments survive a rel
   await expect(page.getByLabel('Client timeout (s)')).toHaveValue('90')
   await tab(page, 'Data').click()
   await expect(page.locator('tbody tr')).toContainText('tiny.csv')
-  // The experiment (its cost is not asserted: see known-bugs.spec.ts, issue #4).
+  // The experiment (its numbers are compared with Replay in experiments.spec.ts).
   await tab(page, 'Experiments').click()
   const row = page.locator('tr', { has: page.getByLabel('Experiment name') })
   await expect(row).toHaveCount(1)
